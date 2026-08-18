@@ -1,117 +1,89 @@
 import streamlit as st
-from datetime import date
-import database as db
+import pandas as pd
+from database import save_excel_table, load_data
 
-st.set_page_config(page_title="Supply Chain Risk Manager", layout="wide")
+st.set_page_config(page_title="TPRM Risk Lab", layout="wide")
 
-# Initialize database tables
-db.init_db()
-db.init_docs_table()
+st.title("🛡️ TPRM Risk Lab - Third-Party Risk Management")
+st.write("Manage vendors, track missing documentation, and map third-party supply chain risks.")
 
-# Business logic: Required documents per criticality
-REQUIREMENTS = {
-    "Critical": ["ISO 27001", "SOC 2", "DPA", "BCP/DRP", "Right-to-Audit"],
-    "High": ["ISO 27001", "SOC 2", "DPA"],
-    "Medium": ["DPA", "SLA"],
-    "Low": ["Basic Contract"]
-}
+# Sidebar Navigation
+menu = st.sidebar.selectbox("Navigation", ["Dashboard & Import", "Vendor Directory", "Subcontractor Chain (MOVEit Analysis)"])
 
-st.title("Supply Chain & 4th-Party Risk Manager")
-
-menu = ["Vendor Registry", "Document Checklist", "Subcontractor Map", "Dashboard"]
-choice = st.sidebar.selectbox("Navigation", menu)
-
-if choice == "Vendor Registry":
-    st.header("Vendor Registry")
+if menu == "Dashboard & Import":
+    st.header("📥 Bulk Import (Excel Upload)")
+    st.info("Upload your structured Excel file containing the sheets: `vendors`, `documents`, and `subcontractors`.")
     
-    tab_list, tab_add = st.tabs(["View Vendors", "Add Vendor"])
+    uploaded_file = st.file_uploader("Upload your file (.xlsx)", type=["xlsx"])
     
-    with tab_add:
-        st.subheader("Register New Vendor")
-        with st.form("vendor_form"):
-            col1, col2 = st.columns(2)
-            name = col1.text_input("Vendor Name")
-            service_type = col2.text_input("Service Type (e.g., File Transfer, Cloud)")
+    if uploaded_file is not None:
+        try:
+            xls = pd.ExcelFile(uploaded_file)
             
-            col3, col4 = st.columns(2)
-            data_accessed = col3.selectbox("Data Accessed", ["Client PII", "Employee Data", "Financials", "None"])
-            criticality = col4.selectbox("Criticality", ["Critical", "High", "Medium", "Low"])
+            st.success("File successfully detected! Processing sheets...")
             
-            col5, col6, col7 = st.columns(3)
-            onboarded_date = col5.date_input("Onboarded Date", date.today())
-            contract_end_date = col6.date_input("Contract End Date", date.today())
-            status = col7.selectbox("Status", ["Active", "Under Review", "Terminated"])
+            # Preview and save each sheet
+            tabs = st.tabs(xls.sheet_names)
             
-            submitted = st.form_submit_button("Save Vendor")
-            
-            if submitted:
-                if name.strip():
-                    db.add_vendor(
-                        name, service_type, data_accessed, criticality,
-                        str(onboarded_date), str(contract_end_date), status
-                    )
-                    st.success(f"Vendor '{name}' successfully added.")
-                    st.rerun()
-                else:
-                    st.error("Vendor name cannot be empty.")
+            sheets_data = {}
+            for i, sheet_name in enumerate(xls.sheet_names):
+                df = pd.read_excel(xls, sheet_name=sheet_name)
+                sheets_data[sheet_name] = df
+                with tabs[i]:
+                    st.write(f"Preview of **{sheet_name}** ({len(df)} rows):")
+                    st.dataframe(df, use_container_width=True)
+                    
+            if st.button("Commit Data to Database"):
+                for sheet_name, df in sheets_data.items():
+                    save_excel_table(df, sheet_name)
+                st.success("✅ All tables were successfully imported and saved to the database!")
+                
+        except Exception as e:
+            st.error(f"Error processing the file. Ensure the sheets are named correctly (`vendors`, `documents`, `subcontractors`). Details: {e}")
 
-    with tab_list:
-        st.subheader("Existing Vendors")
-        df = db.get_all_vendors()
+elif menu == "Vendor Directory":
+    st.header("📋 Registered Vendors")
+    
+    df_vendors = load_data('vendors')
+    df_docs = load_data('documents')
+    
+    if not df_vendors.empty:
+        # Criticality Filter
+        criticality_filter = st.selectbox("Filter by Criticality", ["All"] + list(df_vendors['criticality'].unique()))
         
-        if df.empty:
-            st.info("No vendors registered yet.")
+        if criticality_filter != "All":
+            df_filtered = df_vendors[df_vendors['criticality'] == criticality_filter]
         else:
-            st.dataframe(df, use_container_width=True)
+            df_filtered = df_vendors
             
-            st.divider()
-            st.subheader("Delete Vendor")
-            vendor_ids = df['vendor_id'].tolist()
-            selected_id = st.selectbox("Select Vendor ID to Delete", vendor_ids)
-            
-            if st.button("Delete Selected Vendor"):
-                db.delete_vendor(selected_id)
-                st.warning(f"Vendor ID {selected_id} deleted.")
-                st.rerun()
-
-elif choice == "Document Checklist":
-    st.header("Document Checklist & Compliance")
-    vendors_df = db.get_all_vendors()
-    
-    if vendors_df.empty:
-        st.warning("No vendors registered. Please add a vendor in the Vendor Registry first.")
+        st.dataframe(df_filtered, use_container_width=True)
+        
+        st.subheader("📄 Document Compliance Status")
+        if not df_docs.empty:
+            # Merge documents with vendor names for easy readability
+            df_merged = df_docs.merge(df_vendors[['vendor_id', 'name']], on='vendor_id', how='left')
+            st.dataframe(df_merged[['name', 'doc_type', 'status', 'expiry_date']], use_container_width=True)
+        else:
+            st.warning("No documents found in the database.")
     else:
-        vendor_name = st.selectbox("Select Vendor", vendors_df['name'].tolist())
-        selected_vendor = vendors_df[vendors_df['name'] == vendor_name].iloc[0]
-        
-        v_id = selected_vendor['vendor_id']
-        v_crit = selected_vendor['criticality']
-        
-        st.write(f"**Criticality Level:** {v_crit}")
-        required_docs = REQUIREMENTS.get(v_crit, [])
-        
-        with st.expander("Add Document for this Vendor"):
-            doc_type = st.selectbox("Document Type", required_docs)
-            doc_status = st.selectbox("Status", ["Received", "Pending", "Expired"])
-            expiry_date = st.date_input("Expiry Date", date.today())
-            
-            if st.button("Save Document"):
-                db.add_document(int(v_id), doc_type, doc_status, str(expiry_date))
-                st.success("Document added successfully.")
-                st.rerun()
+        st.warning("No vendors found. Please upload your Excel file in the 'Dashboard & Import' section first.")
 
-        docs_df = db.get_documents_by_vendor(v_id)
-        received_docs = docs_df['doc_type'].tolist() if not docs_df.empty else []
+elif menu == "Subcontractor Chain (MOVEit Analysis)":
+    st.header("🔗 Fourth-Party & Subcontractor Mapping")
+    st.write("Critical analysis focused on uncovering hidden subcontractors (Lessons learned from the MOVEit supply chain incident).")
+    
+    df_subs = load_data('subcontractors')
+    df_vendors = load_data('vendors')
+    
+    if not df_subs.empty and not df_vendors.empty:
+        df_sub_merged = df_subs.merge(df_vendors[['vendor_id', 'name']], left_on='parent_vendor_id', right_on='vendor_id', how='left')
         
-        st.subheader("Compliance Status")
-        for req in required_docs:
-            if req in received_docs:
-                st.success(f"✅ {req} - Received")
-            else:
-                st.error(f"❌ {req} - Missing")
-
-elif choice == "Subcontractor Map":
-    st.header("Subcontractor Map (Phase 3)")
-
-elif choice == "Dashboard":
-    st.header("Dashboard (Phase 4)")
+        st.warning("⚠️ Vendors with **undisclosed** subcontractors represent high compliance risks and hidden shadow IT vectors.")
+        
+        for index, row in df_sub_merged.iterrows():
+            disclosure_status = "🟢 Disclosed" if row['disclosed_by_vendor'] else "🔴 Hidden / Discovered Internally"
+            with st.expander(f"Parent Vendor: {row['name']} ➔ Subcontractor: {row['subcontractor_name']} ({disclosure_status})"):
+                st.write(f"**Service Provided:** {row['service_provided']}")
+                st.write(f"**Disclosed by Primary Vendor?** {row['disclosed_by_vendor']}")
+    else:
+        st.warning("No subcontractor data loaded in the system.")
