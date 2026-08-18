@@ -1,14 +1,14 @@
 import sqlite3
-from pathlib import Path
-from datetime import date
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
 
 
 # ============================================================
-# TPRM RISK LAB
-# Professional Streamlit MVP
+# TPRM RISK LAB — V2
+# Vendor Risk • Evidence • Findings • Fourth Parties
+# Training / Portfolio Project
 # ============================================================
 
 DB_NAME = "tprm_database.db"
@@ -18,6 +18,7 @@ REQUIRED_SHEETS = {
     "documents",
     "subcontractors",
     "document_requirements",
+    "findings",
 }
 
 
@@ -40,246 +41,90 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    /* ---------- Global ---------- */
-    .stApp {
-        background: #f5f7fa;
-        color: #172033;
-    }
+    .stApp { background:#f5f7fa; color:#172033; }
+    .block-container { max-width:1500px; padding-top:1.4rem; padding-bottom:3rem; }
 
-    .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 3rem;
-        max-width: 1500px;
-    }
-
-    /* ---------- Sidebar ---------- */
     section[data-testid="stSidebar"] {
-        background: #101827;
-        border-right: 1px solid #1f2937;
+        background:#101827;
+        border-right:1px solid #1f2937;
     }
+    section[data-testid="stSidebar"] * { color:#e5e7eb; }
 
-    section[data-testid="stSidebar"] * {
-        color: #e5e7eb;
-    }
+    h1,h2,h3 { color:#111827; letter-spacing:-.02em; }
 
-    section[data-testid="stSidebar"] .stRadio label {
-        padding: 0.35rem 0;
+    .brand {
+        padding:.5rem 0 1.25rem;
+        border-bottom:1px solid #263244;
+        margin-bottom:1rem;
     }
-
-    /* ---------- Typography ---------- */
-    h1, h2, h3 {
-        color: #111827;
-        letter-spacing: -0.02em;
-    }
+    .brand-title { color:white; font-size:1.25rem; font-weight:800; }
+    .brand-subtitle { color:#94a3b8; font-size:.75rem; margin-top:.15rem; }
 
     .page-kicker {
-        color: #64748b;
-        font-size: 0.78rem;
-        font-weight: 700;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        margin-bottom: 0.25rem;
+        color:#64748b; font-size:.76rem; font-weight:800;
+        letter-spacing:.12em; text-transform:uppercase;
     }
+    .page-title { font-size:2rem; font-weight:800; margin:.15rem 0; }
+    .page-subtitle { color:#64748b; font-size:.94rem; margin-bottom:1.4rem; }
 
-    .page-title {
-        font-size: 2rem;
-        font-weight: 750;
-        margin-bottom: 0.2rem;
+    .metric-card,.section-card {
+        background:#fff;
+        border:1px solid #e5e7eb;
+        border-radius:12px;
+        box-shadow:0 1px 2px rgba(15,23,42,.04);
     }
-
-    .page-subtitle {
-        color: #64748b;
-        font-size: 0.95rem;
-        margin-bottom: 1.5rem;
-    }
-
-    /* ---------- Cards ---------- */
-    .metric-card {
-        background: #ffffff;
-        border: 1px solid #e5e7eb;
-        border-radius: 12px;
-        padding: 1.1rem 1.15rem;
-        min-height: 125px;
-        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-    }
-
+    .metric-card { padding:1rem 1.1rem; min-height:118px; }
     .metric-label {
-        color: #64748b;
-        font-size: 0.78rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
+        color:#64748b; font-size:.74rem; font-weight:800;
+        text-transform:uppercase; letter-spacing:.06em;
     }
+    .metric-value { color:#111827; font-size:1.9rem; font-weight:800; margin-top:.3rem; }
+    .metric-note { color:#94a3b8; font-size:.76rem; margin-top:.15rem; }
+    .section-card { padding:1.2rem; margin-bottom:1rem; }
+    .section-title { font-size:1rem; font-weight:800; color:#111827; margin-bottom:.7rem; }
 
-    .metric-value {
-        color: #111827;
-        font-size: 2rem;
-        font-weight: 750;
-        margin-top: 0.35rem;
-    }
+    .risk-critical { color:#b91c1c; }
+    .risk-high { color:#c2410c; }
+    .risk-medium { color:#a16207; }
+    .risk-low { color:#15803d; }
 
-    .metric-note {
-        color: #94a3b8;
-        font-size: 0.78rem;
-        margin-top: 0.2rem;
-    }
-
-    .risk-card {
-        background: #ffffff;
-        border: 1px solid #e5e7eb;
-        border-radius: 12px;
-        padding: 1.25rem;
-        min-height: 150px;
-    }
-
-    .risk-label {
-        color: #64748b;
-        font-size: 0.78rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.07em;
-    }
-
-    .risk-value {
-        font-size: 2rem;
-        font-weight: 800;
-        margin-top: 0.25rem;
-    }
-
-    .risk-high { color: #c2410c; }
-    .risk-critical { color: #b91c1c; }
-    .risk-medium { color: #a16207; }
-    .risk-low { color: #15803d; }
-
-    /* ---------- Status pills ---------- */
     .pill {
-        display: inline-block;
-        padding: 0.28rem 0.65rem;
-        border-radius: 999px;
-        font-size: 0.72rem;
-        font-weight: 750;
-        letter-spacing: 0.02em;
+        display:inline-block; padding:.26rem .62rem; border-radius:999px;
+        font-size:.7rem; font-weight:800;
     }
-
-    .pill-critical {
-        background: #fee2e2;
-        color: #991b1b;
-    }
-
-    .pill-high {
-        background: #ffedd5;
-        color: #9a3412;
-    }
-
-    .pill-medium {
-        background: #fef3c7;
-        color: #92400e;
-    }
-
-    .pill-low {
-        background: #dcfce7;
-        color: #166534;
-    }
-
-    .pill-valid {
-        background: #dcfce7;
-        color: #166534;
-    }
-
-    .pill-pending {
-        background: #fef3c7;
-        color: #92400e;
-    }
-
-    .pill-expired {
-        background: #fee2e2;
-        color: #991b1b;
-    }
-
-    /* ---------- Section cards ---------- */
-    .section-card {
-        background: #ffffff;
-        border: 1px solid #e5e7eb;
-        border-radius: 12px;
-        padding: 1.25rem;
-        margin-bottom: 1rem;
-    }
-
-    .section-title {
-        font-size: 1rem;
-        font-weight: 750;
-        color: #111827;
-        margin-bottom: 0.75rem;
-    }
+    .pill-critical { background:#fee2e2; color:#991b1b; }
+    .pill-high { background:#ffedd5; color:#9a3412; }
+    .pill-medium { background:#fef3c7; color:#92400e; }
+    .pill-low { background:#dcfce7; color:#166534; }
+    .pill-received,.pill-closed,.pill-compliant { background:#dcfce7; color:#166534; }
+    .pill-pending,.pill-in-progress { background:#fef3c7; color:#92400e; }
+    .pill-expired,.pill-missing,.pill-open,.pill-undisclosed { background:#fee2e2; color:#991b1b; }
 
     .finding {
-        border-left: 4px solid #dc2626;
-        background: #fff7f7;
-        padding: 0.8rem 1rem;
-        border-radius: 0 8px 8px 0;
-        margin-bottom: 0.65rem;
+        border-left:4px solid #dc2626; background:#fff7f7;
+        padding:.75rem 1rem; border-radius:0 8px 8px 0; margin-bottom:.6rem;
     }
+    .finding.medium { border-left-color:#ca8a04; background:#fffdf3; }
+    .finding.low { border-left-color:#16a34a; background:#f4fff7; }
+    .finding-title { font-weight:750; color:#1f2937; }
+    .finding-detail { color:#64748b; font-size:.8rem; margin-top:.12rem; }
 
-    .finding.high {
-        border-left-color: #ea580c;
-        background: #fffaf5;
+    .score-box {
+        background:#fff; border:1px solid #e5e7eb; border-radius:12px;
+        padding:1.15rem;
     }
-
-    .finding.medium {
-        border-left-color: #ca8a04;
-        background: #fffdf3;
+    .score-number { font-size:2.5rem; font-weight:850; color:#111827; }
+    .driver-row {
+        display:flex; justify-content:space-between; padding:.42rem 0;
+        border-bottom:1px solid #f1f5f9; font-size:.83rem;
     }
+    .driver-row:last-child { border-bottom:0; }
+    .driver-name { color:#475569; }
+    .driver-score { font-weight:800; color:#111827; }
 
-    .finding-title {
-        font-weight: 700;
-        color: #1f2937;
-    }
-
-    .finding-detail {
-        color: #64748b;
-        font-size: 0.82rem;
-        margin-top: 0.15rem;
-    }
-
-    /* ---------- Sidebar branding ---------- */
-    .brand {
-        padding: 0.5rem 0 1.25rem 0;
-        border-bottom: 1px solid #263244;
-        margin-bottom: 1rem;
-    }
-
-    .brand-title {
-        color: #ffffff;
-        font-size: 1.25rem;
-        font-weight: 800;
-    }
-
-    .brand-subtitle {
-        color: #94a3b8;
-        font-size: 0.75rem;
-        margin-top: 0.15rem;
-    }
-
-    .sidebar-caption {
-        color: #64748b;
-        font-size: 0.72rem;
-        margin-top: 1.5rem;
-        line-height: 1.5;
-    }
-
-    /* ---------- Tables ---------- */
-    div[data-testid="stDataFrame"] {
-        border: 1px solid #e5e7eb;
-        border-radius: 10px;
-        overflow: hidden;
-    }
-
-    /* ---------- Buttons ---------- */
-    .stButton > button {
-        border-radius: 8px;
-        font-weight: 650;
-    }
-
+    .sidebar-caption { color:#64748b; font-size:.72rem; margin-top:1.5rem; line-height:1.5; }
+    div[data-testid="stDataFrame"] { border:1px solid #e5e7eb; border-radius:10px; overflow:hidden; }
+    .stButton > button { border-radius:8px; font-weight:700; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -298,11 +143,7 @@ def table_exists(table_name):
     conn = get_connection()
     try:
         result = pd.read_sql_query(
-            """
-            SELECT name
-            FROM sqlite_master
-            WHERE type='table' AND name=?
-            """,
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
             conn,
             params=(table_name,),
         )
@@ -314,21 +155,15 @@ def table_exists(table_name):
 @st.cache_data(ttl=30)
 def load_data(table_name):
     allowed = {
-        "vendors",
-        "documents",
-        "subcontractors",
-        "document_requirements",
+        "vendors", "documents", "subcontractors",
+        "document_requirements", "findings",
     }
-
     if table_name not in allowed or not table_exists(table_name):
         return pd.DataFrame()
 
     conn = get_connection()
     try:
-        return pd.read_sql_query(
-            f'SELECT * FROM "{table_name}"',
-            conn,
-        )
+        return pd.read_sql_query(f'SELECT * FROM "{table_name}"', conn)
     finally:
         conn.close()
 
@@ -336,30 +171,21 @@ def load_data(table_name):
 def save_table(df, table_name):
     conn = get_connection()
     try:
-        df.to_sql(
-            table_name,
-            conn,
-            if_exists="replace",
-            index=False,
-        )
+        df.to_sql(table_name, conn, if_exists="replace", index=False)
     finally:
         conn.close()
-
     load_data.clear()
 
 
 # ============================================================
-# DATA HELPERS
+# HELPERS
 # ============================================================
 
 def normalize_columns(df):
     df = df.copy()
     df.columns = (
-        df.columns
-        .str.strip()
-        .str.lower()
-        .str.replace(" ", "_")
-        .str.replace("-", "_")
+        df.columns.str.strip().str.lower()
+        .str.replace(" ", "_").str.replace("-", "_")
     )
     return df
 
@@ -370,97 +196,103 @@ def truthy(value):
     }
 
 
-def get_status_pill(value):
+def pill(value):
     text = str(value)
-    css = text.lower().replace(" ", "-").replace("/", "-")
+    css = (
+        text.lower().replace(" ", "-")
+        .replace("/", "-")
+    )
     return f'<span class="pill pill-{css}">{text}</span>'
 
 
-def calculate_document_compliance(vendor, documents, requirements):
-    if vendor.empty or requirements.empty:
-        return {
-            "required": 0,
-            "compliant": 0,
-            "missing": [],
-            "expired": [],
-            "pending": [],
-            "percentage": 0,
-        }
+def page_header(kicker, title, subtitle):
+    st.markdown(
+        f"""
+        <div class="page-kicker">{kicker}</div>
+        <div class="page-title">{title}</div>
+        <div class="page-subtitle">{subtitle}</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    criticality = str(vendor.iloc[0].get("criticality", "Low"))
 
-    reqs = requirements[
-        requirements["criticality"].astype(str).str.lower()
-        == criticality.lower()
+def days_to_contract_end(value):
+    dt = pd.to_datetime(value, errors="coerce")
+    if pd.isna(dt):
+        return None
+    return (dt.normalize() - pd.Timestamp.today().normalize()).days
+
+
+# ============================================================
+# DOCUMENT ENGINE
+# ============================================================
+
+def document_status(vendor_id, doc_type, documents):
+    rows = documents[
+        (documents["vendor_id"] == vendor_id)
+        & (
+            documents["doc_type"].astype(str).str.lower()
+            == str(doc_type).lower()
+        )
     ].copy()
 
-    # High: ISO 27001 OR SOC 2
-    required_groups = []
-    high_alternative = False
-
-    if criticality.lower() == "high":
-        standard = reqs[
-            ~reqs["required_document"].isin(
-                ["ISO 27001 Certificate", "SOC 2 Report"]
-            )
-        ]["required_document"].tolist()
-
-        required_groups = standard
-        high_alternative = True
-    else:
-        required_groups = reqs["required_document"].tolist()
-
-    vendor_id = vendor.iloc[0]["vendor_id"]
-
-    vd = documents[
-        documents["vendor_id"] == vendor_id
-    ].copy()
+    if rows.empty:
+        return "Missing"
 
     today = pd.Timestamp.today().normalize()
 
-    def doc_status(doc_type):
-        rows = vd[
-            vd["doc_type"].astype(str).str.lower()
-            == doc_type.lower()
+    for _, row in rows.iterrows():
+        status = str(row.get("status", "")).lower()
+        expiry = pd.to_datetime(row.get("expiry_date"), errors="coerce")
+
+        if status == "received":
+            if pd.notna(expiry) and expiry < today:
+                continue
+            return "Received"
+
+        if status == "pending":
+            return "Pending"
+
+        if status == "expired":
+            return "Expired"
+
+    return "Missing"
+
+
+def compliance_engine(vendor, documents, requirements):
+    if vendor.empty or requirements.empty:
+        return {
+            "required": 0, "received": 0, "missing": [],
+            "pending": [], "expired": [], "percentage": 0
+        }
+
+    v = vendor.iloc[0]
+    vendor_id = v["vendor_id"]
+    criticality = str(v.get("criticality", "Low"))
+
+    req = requirements[
+        requirements["criticality"].astype(str).str.lower()
+        == criticality.lower()
+    ]
+
+    required_docs = req["required_document"].tolist()
+
+    # Business rule: High vendors require ISO 27001 OR SOC 2.
+    alternatives = []
+    if criticality.lower() == "high":
+        required_docs = [
+            d for d in required_docs
+            if d not in ["ISO 27001 Certificate", "SOC 2 Report"]
         ]
+        alternatives = ["ISO 27001 Certificate", "SOC 2 Report"]
 
-        if rows.empty:
-            return "Missing"
+    received, missing, pending, expired = [], [], [], []
 
-        # Prefer a current received record.
-        for _, row in rows.iterrows():
-            status = str(row.get("status", "")).lower()
-
-            if status == "received":
-                expiry = pd.to_datetime(
-                    row.get("expiry_date"),
-                    errors="coerce",
-                )
-
-                if pd.notna(expiry) and expiry < today:
-                    continue
-
-                return "Received"
-
-            if status == "pending":
-                return "Pending"
-
-            if status == "expired":
-                return "Expired"
-
-        return "Missing"
-
-    missing = []
-    expired = []
-    pending = []
-    compliant = 0
-    required_count = len(required_groups) + (1 if high_alternative else 0)
-
-    for doc in required_groups:
-        status = doc_status(doc)
+    for doc in required_docs:
+        status = document_status(vendor_id, doc, documents)
 
         if status == "Received":
-            compliant += 1
+            received.append(doc)
         elif status == "Pending":
             pending.append(doc)
         elif status == "Expired":
@@ -468,130 +300,133 @@ def calculate_document_compliance(vendor, documents, requirements):
         else:
             missing.append(doc)
 
-    if high_alternative:
-        iso = doc_status("ISO 27001 Certificate")
-        soc = doc_status("SOC 2 Report")
+    if alternatives:
+        alt_status = {
+            d: document_status(vendor_id, d, documents)
+            for d in alternatives
+        }
 
-        if iso == "Received" or soc == "Received":
-            compliant += 1
-        elif iso == "Expired" and soc == "Expired":
-            expired.append("ISO 27001 / SOC 2")
-        elif iso == "Pending" or soc == "Pending":
+        if "Received" in alt_status.values():
+            received.append("ISO 27001 / SOC 2")
+        elif "Pending" in alt_status.values():
             pending.append("ISO 27001 / SOC 2")
+        elif all(s == "Expired" for s in alt_status.values()):
+            expired.append("ISO 27001 / SOC 2")
         else:
             missing.append("ISO 27001 / SOC 2")
 
+    required_count = (
+        len(required_docs) + (1 if alternatives else 0)
+    )
+    received_count = len(received)
+
     percentage = (
-        round((compliant / required_count) * 100)
-        if required_count
-        else 0
+        round(received_count / required_count * 100)
+        if required_count else 0
     )
 
     return {
         "required": required_count,
-        "compliant": compliant,
+        "received": received_count,
         "missing": missing,
-        "expired": expired,
         "pending": pending,
+        "expired": expired,
         "percentage": percentage,
     }
 
 
-def calculate_vendor_risk(vendor, documents, subcontractors, requirements):
-    compliance = calculate_document_compliance(
-        vendor,
-        documents,
-        requirements,
+# ============================================================
+# RISK ENGINE
+# ============================================================
+
+def risk_engine(vendor, documents, subcontractors, requirements):
+    v = vendor.iloc[0]
+
+    criticality = str(v.get("criticality", "Low")).lower()
+    data_access = str(v.get("data_accessed", "None")).lower()
+
+    # Inherent risk — 30 points
+    criticality_score = {
+        "critical": 30,
+        "high": 22,
+        "medium": 12,
+        "low": 4,
+    }.get(criticality, 5)
+
+    # Data sensitivity — 20 points
+    if "payment" in data_access:
+        data_score = 20
+    elif "client pii" in data_access and "employee data" in data_access:
+        data_score = 18
+    elif "client pii" in data_access:
+        data_score = 16
+    elif "employee data" in data_access:
+        data_score = 12
+    elif "security logs" in data_access:
+        data_score = 15
+    elif "none" in data_access:
+        data_score = 0
+    else:
+        data_score = 8
+
+    compliance = compliance_engine(
+        vendor, documents, requirements
     )
 
-    criticality = str(
-        vendor.iloc[0].get("criticality", "Low")
-    ).lower()
+    # Evidence risk — 20 points
+    evidence_gap = (
+        len(compliance["missing"]) * 7
+        + len(compliance["expired"]) * 6
+        + len(compliance["pending"]) * 3
+    )
+    evidence_score = min(20, evidence_gap)
 
-    score = {
-        "critical": 45,
-        "high": 32,
-        "medium": 18,
-        "low": 5,
-    }.get(criticality, 10)
-
-    findings = []
-
-    if compliance["missing"]:
-        score += min(25, len(compliance["missing"]) * 8)
-
-        for doc in compliance["missing"]:
-            findings.append({
-                "severity": "High",
-                "title": f"Missing {doc}",
-                "detail": "Required evidence is not currently available.",
-            })
-
-    if compliance["expired"]:
-        score += min(25, len(compliance["expired"]) * 8)
-
-        for doc in compliance["expired"]:
-            findings.append({
-                "severity": "High",
-                "title": f"Expired {doc}",
-                "detail": "Required evidence is no longer valid.",
-            })
-
-    if compliance["pending"]:
-        score += min(12, len(compliance["pending"]) * 4)
-
-        for doc in compliance["pending"]:
-            findings.append({
-                "severity": "Medium",
-                "title": f"Pending {doc}",
-                "detail": "Required evidence has not yet been received.",
-            })
-
-    vendor_id = vendor.iloc[0]["vendor_id"]
-
+    # Fourth-party risk — 15 points
+    vendor_id = v["vendor_id"]
     subs = subcontractors[
         subcontractors["parent_vendor_id"] == vendor_id
     ] if not subcontractors.empty else pd.DataFrame()
 
     hidden = 0
-
     if not subs.empty and "disclosed_by_vendor" in subs.columns:
         hidden = sum(
             not truthy(x)
             for x in subs["disclosed_by_vendor"]
         )
 
-    if hidden:
-        score += min(20, hidden * 10)
+    fourth_party_score = min(15, hidden * 8)
 
-        findings.append({
-            "severity": "High",
-            "title": f"{hidden} undisclosed subcontractor(s)",
-            "detail": "Fourth-party dependency was not disclosed by the primary vendor.",
-        })
-
-    contract_end = pd.to_datetime(
-        vendor.iloc[0].get("contract_end_date"),
-        errors="coerce",
+    # Contract risk — 10 points
+    contract_days = days_to_contract_end(
+        v.get("contract_end_date")
     )
 
-    if pd.notna(contract_end):
-        days = (contract_end - pd.Timestamp.today()).days
+    if contract_days is None:
+        contract_score = 5
+    elif contract_days < 0:
+        contract_score = 10
+    elif contract_days <= 90:
+        contract_score = 7
+    elif contract_days <= 180:
+        contract_score = 3
+    else:
+        contract_score = 0
 
-        if days < 0:
-            score += 15
-            findings.append({
-                "severity": "High",
-                "title": "Contract has expired",
-                "detail": "Contract end date has passed.",
-            })
-        elif days <= 90:
-            score += 8
-            findings.append({
-                "severity": "Medium",
-                "title": "Contract nearing expiration",
-                "detail": f"Contract expires in approximately {days} days.",
-            })
+    # Status / operational issue — 5 points
+    vendor_status = str(v.get("status", "")).lower()
+    status_score = 5 if vendor_status in {
+        "under review", "terminated"
+    } else 0
+
+    score = min(
+        100,
+        criticality_score
+        + data_score
+        + evidence_score
+        + fourth_party_score
+        + contract_score
+        + status_score,
+    )
 
     if score >= 75:
         level = "Critical"
@@ -602,38 +437,97 @@ def calculate_vendor_risk(vendor, documents, subcontractors, requirements):
     else:
         level = "Low"
 
+    drivers = [
+        ("Criticality", criticality_score, 30),
+        ("Data sensitivity", data_score, 20),
+        ("Documentation", evidence_score, 20),
+        ("Fourth-party exposure", fourth_party_score, 15),
+        ("Contract", contract_score, 10),
+        ("Operational status", status_score, 5),
+    ]
+
     return {
-        "score": min(score, 100),
+        "score": score,
         "level": level,
-        "findings": findings,
+        "drivers": drivers,
         "compliance": compliance,
         "hidden_subcontractors": hidden,
+        "contract_days": contract_days,
     }
 
 
-def build_risk_register(vendors, documents, subcontractors, requirements):
-    rows = []
+# ============================================================
+# FINDINGS ENGINE
+# ============================================================
 
-    for _, vendor in vendors.iterrows():
-        result = calculate_vendor_risk(
-            pd.DataFrame([vendor]),
-            documents,
-            subcontractors,
-            requirements,
-        )
+def generate_findings(vendor, documents, subcontractors, requirements):
+    result = risk_engine(
+        vendor, documents, subcontractors, requirements
+    )
 
-        rows.append({
-            "Vendor": vendor.get("name"),
-            "Criticality": vendor.get("criticality"),
-            "Overall Risk": result["level"],
-            "Risk Score": result["score"],
-            "Document Compliance": f'{result["compliance"]["percentage"]}%',
-            "Open Findings": len(result["findings"]),
-            "Hidden 4th Parties": result["hidden_subcontractors"],
-            "Status": vendor.get("status"),
+    v = vendor.iloc[0]
+    findings = []
+
+    for doc in result["compliance"]["missing"]:
+        findings.append({
+            "vendor_id": v["vendor_id"],
+            "vendor_name": v["name"],
+            "severity": "High",
+            "finding_type": "Missing Evidence",
+            "description": f"Required document missing: {doc}",
         })
 
-    return pd.DataFrame(rows)
+    for doc in result["compliance"]["expired"]:
+        findings.append({
+            "vendor_id": v["vendor_id"],
+            "vendor_name": v["name"],
+            "severity": "High",
+            "finding_type": "Expired Evidence",
+            "description": f"Required document expired: {doc}",
+        })
+
+    for doc in result["compliance"]["pending"]:
+        findings.append({
+            "vendor_id": v["vendor_id"],
+            "vendor_name": v["name"],
+            "severity": "Medium",
+            "finding_type": "Pending Evidence",
+            "description": f"Required document pending: {doc}",
+        })
+
+    if result["hidden_subcontractors"]:
+        findings.append({
+            "vendor_id": v["vendor_id"],
+            "vendor_name": v["name"],
+            "severity": "High",
+            "finding_type": "Fourth-Party Risk",
+            "description": (
+                f'{result["hidden_subcontractors"]} undisclosed '
+                "subcontractor relationship(s) identified."
+            ),
+        })
+
+    if result["contract_days"] is not None:
+        if result["contract_days"] < 0:
+            findings.append({
+                "vendor_id": v["vendor_id"],
+                "vendor_name": v["name"],
+                "severity": "High",
+                "finding_type": "Contract",
+                "description": "Contract has expired.",
+            })
+        elif result["contract_days"] <= 90:
+            findings.append({
+                "vendor_id": v["vendor_id"],
+                "vendor_name": v["name"],
+                "severity": "Medium",
+                "finding_type": "Contract",
+                "description": (
+                    f'Contract expires in {result["contract_days"]} days.'
+                ),
+            })
+
+    return findings
 
 
 # ============================================================
@@ -644,6 +538,7 @@ vendors = load_data("vendors")
 documents = load_data("documents")
 subcontractors = load_data("subcontractors")
 requirements = load_data("document_requirements")
+findings_db = load_data("findings")
 
 
 # ============================================================
@@ -666,8 +561,10 @@ menu = st.sidebar.radio(
         "Executive Dashboard",
         "Vendor Portfolio",
         "Risk Register",
+        "Findings & Remediation",
         "Fourth-Party Risk",
         "Document Compliance",
+        "Assessment Simulation",
         "Data Import",
     ],
 )
@@ -675,38 +572,12 @@ menu = st.sidebar.radio(
 st.sidebar.markdown(
     """
     <div class="sidebar-caption">
-        Internal risk assessment workspace<br>
-        Evidence • Vendors • Supply Chain
+        Portfolio project & practical training lab<br>
+        IT Risk • Cyber GRC • TPRM
     </div>
     """,
     unsafe_allow_html=True,
 )
-
-
-# ============================================================
-# EMPTY DATABASE STATE
-# ============================================================
-
-if vendors.empty and menu != "Data Import":
-    st.warning(
-        "No TPRM data is loaded yet. "
-        "Use **Data Import** to upload the mock Excel dataset."
-    )
-
-
-# ============================================================
-# PAGE HEADER
-# ============================================================
-
-def page_header(kicker, title, subtitle):
-    st.markdown(
-        f"""
-        <div class="page-kicker">{kicker}</div>
-        <div class="page-title">{title}</div>
-        <div class="page-subtitle">{subtitle}</div>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 # ============================================================
@@ -718,71 +589,59 @@ if menu == "Executive Dashboard":
     page_header(
         "Executive Overview",
         "TPRM Risk Overview",
-        "A consolidated view of third-party exposure, evidence quality and supply-chain risk.",
+        "Portfolio exposure, evidence quality, remediation and supply-chain risk.",
     )
 
     if vendors.empty:
+        st.info("Import the mock dataset to activate the dashboard.")
         st.stop()
 
-    register = build_risk_register(
-        vendors,
-        documents,
-        subcontractors,
-        requirements,
-    )
-
-    critical_count = len(
-        vendors[
-            vendors["criticality"].astype(str).str.lower()
-            == "critical"
-        ]
-    )
-
-    high_risk_count = len(
-        register[
-            register["Overall Risk"].isin(
-                ["Critical", "High"]
-            )
-        ]
-    )
-
-    avg_compliance = (
-        round(
-            register["Document Compliance"]
-            .str.rstrip("%")
-            .astype(float)
-            .mean()
+    results = []
+    for _, vendor in vendors.iterrows():
+        r = risk_engine(
+            pd.DataFrame([vendor]),
+            documents,
+            subcontractors,
+            requirements,
         )
-        if not register.empty
-        else 0
-    )
+        results.append({
+            "Vendor": vendor["name"],
+            "Risk": r["level"],
+            "Score": r["score"],
+            "Compliance": r["compliance"]["percentage"],
+            "Hidden": r["hidden_subcontractors"],
+        })
 
-    open_findings = int(
-        register["Open Findings"].sum()
-    )
+    register = pd.DataFrame(results)
 
-    if high_risk_count >= 8:
-        overall = "Critical"
-    elif high_risk_count >= 4:
-        overall = "High"
-    elif high_risk_count >= 1:
-        overall = "Medium"
-    else:
-        overall = "Low"
+    critical = int(
+        (vendors["criticality"].astype(str).str.lower() == "critical").sum()
+    )
+    high_risk = int(
+        register["Risk"].isin(["Critical", "High"]).sum()
+    )
+    avg_compliance = int(register["Compliance"].mean())
+    total_hidden = int(register["Hidden"].sum())
+
+    overall = (
+        "Critical" if high_risk >= 8
+        else "High" if high_risk >= 4
+        else "Medium" if high_risk >= 1
+        else "Low"
+    )
 
     cols = st.columns(5)
-
     cards = [
-        ("Overall Exposure", overall, "Portfolio risk posture"),
-        ("Total Vendors", len(vendors), "Active assessment population"),
-        ("Critical Vendors", critical_count, "Highest inherent criticality"),
-        ("Open Findings", open_findings, "Evidence & supply-chain issues"),
-        ("Document Compliance", f"{avg_compliance}%", "Portfolio average"),
+        ("Overall Exposure", overall, "Portfolio posture"),
+        ("Vendors", len(vendors), "Assessment population"),
+        ("Critical", critical, "Inherent criticality"),
+        ("High/Critical Risk", high_risk, "Immediate attention"),
+        ("Evidence Compliance", f"{avg_compliance}%", "Portfolio average"),
     ]
 
     for col, (label, value, note) in zip(cols, cards):
         with col:
-            css = f"risk-{overall.lower()}" if label == "Overall Exposure" else ""
+            css = f"risk-{str(value).lower()}" if label == "Overall Exposure" else ""
             st.markdown(
                 f"""
                 <div class="metric-card">
@@ -796,90 +655,55 @@ if menu == "Executive Dashboard":
 
     st.write("")
 
-    left, right = st.columns([1, 1])
+    left, right = st.columns(2)
 
     with left:
         st.markdown(
             '<div class="section-card"><div class="section-title">Risk Distribution</div>',
             unsafe_allow_html=True,
         )
-
-        distribution = (
-            register["Overall Risk"]
-            .value_counts()
-            .reindex(
-                ["Critical", "High", "Medium", "Low"],
-                fill_value=0,
-            )
+        distribution = register["Risk"].value_counts().reindex(
+            ["Critical", "High", "Medium", "Low"],
+            fill_value=0,
         )
-
         st.bar_chart(distribution)
-
         st.markdown("</div>", unsafe_allow_html=True)
 
     with right:
         st.markdown(
-            '<div class="section-card"><div class="section-title">Document Compliance</div>',
+            '<div class="section-card"><div class="section-title">Top Risk Vendors</div>',
             unsafe_allow_html=True,
         )
-
-        compliance_counts = pd.Series({
-            "Compliant": int(
-                register["Document Compliance"]
-                .str.rstrip("%")
-                .astype(int)
-                .ge(100)
-                .sum()
-            ),
-            "Partial": int(
-                register["Document Compliance"]
-                .str.rstrip("%")
-                .astype(int)
-                .between(1, 99)
-                .sum()
-            ),
-            "No evidence": int(
-                register["Document Compliance"]
-                .str.rstrip("%")
-                .astype(int)
-                .eq(0)
-                .sum()
-            ),
-        })
-
-        st.bar_chart(compliance_counts)
-
+        top = register.sort_values("Score", ascending=False).head(8)
+        st.dataframe(
+            top,
+            use_container_width=True,
+            hide_index=True,
+        )
         st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown(
-        '<div class="section-card"><div class="section-title">Priority Attention</div>',
+        '<div class="section-card"><div class="section-title">Executive Attention</div>',
         unsafe_allow_html=True,
     )
 
-    priority = register[
-        register["Overall Risk"].isin(["Critical", "High"])
-    ].sort_values(
-        ["Overall Risk", "Risk Score"],
-        ascending=[True, False],
-    )
+    attention = register[
+        register["Risk"].isin(["Critical", "High"])
+    ].sort_values("Score", ascending=False)
 
-    if priority.empty:
-        st.success("No Critical or High risk vendors require immediate attention.")
+    if attention.empty:
+        st.success("No High or Critical risk vendors identified.")
     else:
         st.dataframe(
-            priority[
-                [
-                    "Vendor",
-                    "Criticality",
-                    "Overall Risk",
-                    "Risk Score",
-                    "Document Compliance",
-                    "Open Findings",
-                    "Hidden 4th Parties",
-                ]
-            ],
+            attention,
             use_container_width=True,
             hide_index=True,
+        )
+
+    if total_hidden:
+        st.warning(
+            f"{total_hidden} undisclosed fourth-party relationship(s) "
+            "require review across the portfolio."
         )
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -894,44 +718,38 @@ elif menu == "Vendor Portfolio":
     page_header(
         "Vendor Management",
         "Vendor Portfolio",
-        "Search, filter and investigate your third-party population.",
+        "Investigate vendors from an inherent-risk and evidence perspective.",
     )
 
     if vendors.empty:
         st.stop()
 
-    col1, col2, col3 = st.columns([1, 1, 2])
+    c1, c2, c3 = st.columns([1, 1, 2])
 
-    with col1:
-        criticality = st.selectbox(
+    with c1:
+        crit = st.selectbox(
             "Criticality",
             ["All", "Critical", "High", "Medium", "Low"],
         )
 
-    with col2:
+    with c2:
         status = st.selectbox(
-            "Vendor Status",
-            ["All"] + sorted(
-                vendors["status"]
-                .dropna()
-                .astype(str)
-                .unique()
-                .tolist()
-            ),
+            "Status",
+            ["All"] + sorted(vendors["status"].astype(str).unique()),
         )
 
-    with col3:
+    with c3:
         search = st.text_input(
-            "Search vendor",
-            placeholder="e.g. SecureSend",
+            "Search",
+            placeholder="Vendor name or service...",
         )
 
     filtered = vendors.copy()
 
-    if criticality != "All":
+    if crit != "All":
         filtered = filtered[
             filtered["criticality"].astype(str).str.lower()
-            == criticality.lower()
+            == crit.lower()
         ]
 
     if status != "All":
@@ -940,108 +758,116 @@ elif menu == "Vendor Portfolio":
         ]
 
     if search:
-        filtered = filtered[
-            filtered["name"].astype(str).str.contains(
-                search,
-                case=False,
-                na=False,
-            )
-        ]
-
-    st.caption(
-        f"{len(filtered)} vendor(s) match the current filters."
-    )
+        mask = (
+            filtered["name"].astype(str).str.contains(search, case=False, na=False)
+            | filtered["service_type"].astype(str).str.contains(search, case=False, na=False)
+        )
+        filtered = filtered[mask]
 
     st.dataframe(
-        filtered[
-            [
-                "vendor_id",
-                "name",
-                "service_type",
-                "data_accessed",
-                "criticality",
-                "contract_end_date",
-                "status",
-            ]
-        ],
+        filtered,
         use_container_width=True,
         hide_index=True,
     )
 
     st.divider()
 
-    st.subheader("Vendor Assessment")
-
     selected_name = st.selectbox(
-        "Select a vendor to investigate",
-        filtered["name"].tolist()
-        if not filtered.empty
-        else vendors["name"].tolist(),
+        "Open Vendor Assessment",
+        filtered["name"].tolist() if not filtered.empty else [],
     )
 
-    selected = vendors[
-        vendors["name"] == selected_name
-    ]
+    if selected_name:
 
-    if not selected.empty:
-        vendor = selected.iloc[0]
+        vendor = vendors[vendors["name"] == selected_name]
+        v = vendor.iloc[0]
 
-        result = calculate_vendor_risk(
-            selected,
-            documents,
-            subcontractors,
-            requirements,
+        risk = risk_engine(
+            vendor, documents, subcontractors, requirements
+        )
+
+        st.markdown(
+            f"## {v['name']}"
+        )
+        st.caption(
+            f"{v['service_type']} · {v['data_accessed']}"
         )
 
         c1, c2, c3, c4 = st.columns(4)
-
-        c1.metric("Overall Risk", result["level"])
-        c2.metric("Risk Score", f'{result["score"]}/100')
-        c3.metric(
-            "Document Compliance",
-            f'{result["compliance"]["percentage"]}%',
-        )
-        c4.metric(
-            "Hidden 4th Parties",
-            result["hidden_subcontractors"],
-        )
-
-        st.markdown(
-            f"""
-            ### {vendor["name"]}
-            **{vendor["service_type"]}** ·
-            Data accessed: **{vendor["data_accessed"]}**
-            """
-        )
-
-        st.markdown(
-            f"Criticality: {get_status_pill(vendor['criticality'])}",
-            unsafe_allow_html=True,
-        )
+        c1.metric("Overall Risk", risk["level"])
+        c2.metric("Risk Score", f"{risk['score']}/100")
+        c3.metric("Evidence", f"{risk['compliance']['percentage']}%")
+        c4.metric("4th Parties", risk["hidden_subcontractors"])
 
         st.write("")
 
-        if result["findings"]:
-            st.markdown("#### Open Findings")
+        left, right = st.columns([1, 1])
 
-            for finding in result["findings"]:
-                severity_class = finding["severity"].lower()
+        with left:
+            st.markdown(
+                '<div class="section-card"><div class="section-title">Risk Drivers</div>',
+                unsafe_allow_html=True,
+            )
 
+            for name, value, maximum in risk["drivers"]:
                 st.markdown(
                     f"""
-                    <div class="finding {severity_class}">
+                    <div class="driver-row">
+                        <span class="driver-name">{name}</span>
+                        <span class="driver-score">{value}/{maximum}</span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        with right:
+            st.markdown(
+                '<div class="section-card"><div class="section-title">Contract & Status</div>',
+                unsafe_allow_html=True,
+            )
+
+            st.write(f"**Criticality:** {v['criticality']}")
+            st.write(f"**Vendor status:** {v['status']}")
+            st.write(f"**Onboarded:** {v['onboarded_date']}")
+            st.write(f"**Contract end:** {v['contract_end_date']}")
+
+            days = risk["contract_days"]
+            if days is not None:
+                if days < 0:
+                    st.error("Contract expired.")
+                elif days <= 90:
+                    st.warning(f"Contract expires in {days} days.")
+                else:
+                    st.success(f"{days} days remaining.")
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        st.subheader("Open Findings")
+
+        generated = generate_findings(
+            vendor, documents, subcontractors, requirements
+        )
+
+        if not generated:
+            st.success("No findings generated for this vendor.")
+        else:
+            for f in generated:
+                cls = f["severity"].lower()
+                st.markdown(
+                    f"""
+                    <div class="finding {cls}">
                         <div class="finding-title">
-                            {finding["severity"]} · {finding["title"]}
+                            {f["severity"]} · {f["finding_type"]}
                         </div>
                         <div class="finding-detail">
-                            {finding["detail"]}
+                            {f["description"]}
                         </div>
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
-        else:
-            st.success("No open findings identified.")
 
 
 # ============================================================
@@ -1053,44 +879,138 @@ elif menu == "Risk Register":
     page_header(
         "Risk Management",
         "Risk Register",
-        "Prioritize third parties based on criticality, evidence gaps and fourth-party exposure.",
+        "A consolidated register of inherent risk, control gaps and exposure.",
     )
 
     if vendors.empty:
         st.stop()
 
-    register = build_risk_register(
-        vendors,
-        documents,
-        subcontractors,
-        requirements,
-    )
+    rows = []
 
-    selected_risk = st.multiselect(
+    for _, vendor in vendors.iterrows():
+        r = risk_engine(
+            pd.DataFrame([vendor]),
+            documents,
+            subcontractors,
+            requirements,
+        )
+
+        rows.append({
+            "Vendor": vendor["name"],
+            "Criticality": vendor["criticality"],
+            "Risk": r["level"],
+            "Score": r["score"],
+            "Evidence": f'{r["compliance"]["percentage"]}%',
+            "Findings": len(
+                generate_findings(
+                    pd.DataFrame([vendor]),
+                    documents,
+                    subcontractors,
+                    requirements,
+                )
+            ),
+            "Hidden 4th Parties": r["hidden_subcontractors"],
+            "Contract End": vendor["contract_end_date"],
+        })
+
+    register = pd.DataFrame(rows)
+
+    selected = st.multiselect(
         "Risk level",
         ["Critical", "High", "Medium", "Low"],
         default=["Critical", "High", "Medium", "Low"],
     )
 
-    result = register[
-        register["Overall Risk"].isin(selected_risk)
-    ].sort_values(
-        "Risk Score",
-        ascending=False,
-    )
+    view = register[
+        register["Risk"].isin(selected)
+    ].sort_values("Score", ascending=False)
 
     st.dataframe(
-        result,
+        view,
         use_container_width=True,
         hide_index=True,
     )
 
     st.download_button(
         "Export Risk Register",
-        result.to_csv(index=False).encode("utf-8"),
+        view.to_csv(index=False).encode("utf-8"),
         "tprm_risk_register.csv",
         "text/csv",
     )
+
+
+# ============================================================
+# FINDINGS & REMEDIATION
+# ============================================================
+
+elif menu == "Findings & Remediation":
+
+    page_header(
+        "Issue Management",
+        "Findings & Remediation",
+        "Track evidence gaps, fourth-party issues and contract risks through remediation.",
+    )
+
+    if vendors.empty:
+        st.stop()
+
+    rows = []
+    finding_id = 1
+
+    for _, vendor in vendors.iterrows():
+        generated = generate_findings(
+            pd.DataFrame([vendor]),
+            documents,
+            subcontractors,
+            requirements,
+        )
+
+        for f in generated:
+            rows.append({
+                "Finding ID": f"F-{finding_id:03d}",
+                "Vendor": f["vendor_name"],
+                "Severity": f["severity"],
+                "Type": f["finding_type"],
+                "Description": f["description"],
+                "Status": "Open",
+                "Owner": "TPRM",
+            })
+            finding_id += 1
+
+    finding_df = pd.DataFrame(rows)
+
+    if finding_df.empty:
+        st.success("No open findings.")
+    else:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Open Findings", len(finding_df))
+        c2.metric(
+            "High / Critical",
+            int(finding_df["Severity"].isin(["High", "Critical"]).sum()),
+        )
+        c3.metric(
+            "Vendors Affected",
+            finding_df["Vendor"].nunique(),
+        )
+
+        st.dataframe(
+            finding_df,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.download_button(
+            "Export Findings",
+            finding_df.to_csv(index=False).encode("utf-8"),
+            "tprm_findings.csv",
+            "text/csv",
+        )
+
+        st.info(
+            "V2 generates findings dynamically from evidence and supply-chain data. "
+            "The next evolution can persist owner, due date, comments and closure evidence "
+            "directly in SQLite."
+        )
 
 
 # ============================================================
@@ -1102,7 +1022,7 @@ elif menu == "Fourth-Party Risk":
     page_header(
         "Supply Chain",
         "Fourth-Party Risk",
-        "Map subcontractor dependencies and identify undisclosed supply-chain relationships.",
+        "Identify hidden dependencies beneath your primary vendors.",
     )
 
     if subcontractors.empty:
@@ -1121,54 +1041,29 @@ elif menu == "Fourth-Party Risk":
     ]
 
     c1, c2, c3 = st.columns(3)
-
-    c1.metric("Total Subcontractors", len(merged))
+    c1.metric("Subcontractors", len(merged))
     c2.metric("Undisclosed", len(hidden))
-    c3.metric(
-        "Vendors with Hidden 4th Parties",
-        hidden["name"].nunique(),
-    )
+    c3.metric("Vendors Exposed", hidden["name"].nunique())
 
     st.write("")
 
-    if not hidden.empty:
-        st.error(
-            f"{len(hidden)} subcontractor relationship(s) "
-            "were not disclosed by the primary vendor."
-        )
-
-    display = merged[
-        [
-            "name",
-            "criticality",
-            "subcontractor_name",
-            "service_provided",
-            "disclosed_by_vendor",
-        ]
-    ].copy()
-
-    display["Disclosure"] = display[
-        "disclosed_by_vendor"
-    ].apply(
-        lambda x: "Disclosed" if truthy(x) else "Undisclosed"
-    )
-
-    display = display.drop(
-        columns=["disclosed_by_vendor"]
-    )
-
     st.dataframe(
-        display,
+        merged[
+            [
+                "name",
+                "criticality",
+                "subcontractor_name",
+                "service_provided",
+                "disclosed_by_vendor",
+            ]
+        ],
         use_container_width=True,
         hide_index=True,
     )
 
-    st.divider()
-
-    st.subheader("Undisclosed Dependencies")
+    st.subheader("Supply-Chain Findings")
 
     for _, row in hidden.iterrows():
-
         st.markdown(
             f"""
             <div class="finding">
@@ -1177,7 +1072,8 @@ elif menu == "Fourth-Party Risk":
                 </div>
                 <div class="finding-detail">
                     {row["service_provided"]} ·
-                    Vendor criticality: {row["criticality"]}
+                    {row["criticality"]} primary vendor ·
+                    Undisclosed relationship
                 </div>
             </div>
             """,
@@ -1194,81 +1090,60 @@ elif menu == "Document Compliance":
     page_header(
         "Evidence Management",
         "Document Compliance",
-        "Compare required evidence against what has actually been received and what is still valid.",
+        "Assess whether required evidence is present, valid and current.",
     )
 
     if vendors.empty:
         st.stop()
 
-    selected_vendor_name = st.selectbox(
+    selected = st.selectbox(
         "Vendor",
         vendors["name"].tolist(),
     )
 
     vendor = vendors[
-        vendors["name"] == selected_vendor_name
+        vendors["name"] == selected
     ]
 
-    result = calculate_document_compliance(
-        vendor,
-        documents,
-        requirements,
+    result = compliance_engine(
+        vendor, documents, requirements
     )
 
     c1, c2, c3, c4 = st.columns(4)
-
     c1.metric("Required", result["required"])
-    c2.metric("Compliant", result["compliant"])
-    c3.metric("Pending", len(result["pending"]))
-    c4.metric(
-        "Compliance",
-        f'{result["percentage"]}%',
-    )
+    c2.metric("Received", result["received"])
+    c3.metric("Gaps", len(result["missing"]) + len(result["expired"]))
+    c4.metric("Compliance", f'{result["percentage"]}%')
 
     st.write("")
 
     rows = []
 
-    for item in result["missing"]:
-        rows.append([item, "Missing"])
+    for doc in result["missing"]:
+        rows.append([doc, "Missing"])
+    for doc in result["expired"]:
+        rows.append([doc, "Expired"])
+    for doc in result["pending"]:
+        rows.append([doc, "Pending"])
 
-    for item in result["expired"]:
-        rows.append([item, "Expired"])
-
-    for item in result["pending"]:
-        rows.append([item, "Pending"])
-
-    # Build list of received requirements from the vendor.
-    criticality = str(vendor.iloc[0]["criticality"]).lower()
-
+    # Reconstruct received evidence.
+    vendor_id = vendor.iloc[0]["vendor_id"]
     req = requirements[
         requirements["criticality"].astype(str).str.lower()
-        == criticality
+        == str(vendor.iloc[0]["criticality"]).lower()
     ]
 
-    if criticality == "high":
-        candidate_docs = req[
-            ~req["required_document"].isin(
-                ["ISO 27001 Certificate", "SOC 2 Report"]
-            )
-        ]["required_document"].tolist()
-
-        iso_received = "ISO 27001 Certificate" not in (
-            result["missing"] + result["expired"] + result["pending"]
-        )
-
-        soc_received = "SOC 2 Report" not in (
-            result["missing"] + result["expired"] + result["pending"]
-        )
-
-        if iso_received or soc_received:
-            rows.append(["ISO 27001 / SOC 2", "Received"])
-    else:
-        candidate_docs = req["required_document"].tolist()
-
-    for doc in candidate_docs:
-        if doc not in result["missing"] + result["expired"] + result["pending"]:
+    for doc in req["required_document"].tolist():
+        if doc in ["ISO 27001 Certificate", "SOC 2 Report"]:
+            continue
+        if document_status(vendor_id, doc, documents) == "Received":
             rows.append([doc, "Received"])
+
+    if str(vendor.iloc[0]["criticality"]).lower() == "high":
+        iso = document_status(vendor_id, "ISO 27001 Certificate", documents)
+        soc = document_status(vendor_id, "SOC 2 Report", documents)
+        if iso == "Received" or soc == "Received":
+            rows.append(["ISO 27001 / SOC 2", "Received"])
 
     compliance_table = pd.DataFrame(
         rows,
@@ -1282,13 +1157,156 @@ elif menu == "Document Compliance":
     )
 
     if result["percentage"] == 100:
-        st.success("All required evidence is currently compliant.")
+        st.success("Evidence set is fully compliant.")
     elif result["expired"]:
         st.error("Expired evidence requires remediation.")
     elif result["missing"]:
-        st.warning("Required evidence is missing.")
+        st.warning("Missing evidence requires follow-up.")
     else:
-        st.info("Some evidence is still pending.")
+        st.info("Evidence is partially complete; pending items remain.")
+
+
+# ============================================================
+# ASSESSMENT SIMULATION
+# ============================================================
+
+elif menu == "Assessment Simulation":
+
+    page_header(
+        "Training Lab",
+        "TPRM Assessment Simulation",
+        "Practice assessing a vendor before revealing the model answer.",
+    )
+
+    if vendors.empty:
+        st.stop()
+
+    selected_name = st.selectbox(
+        "Choose a case",
+        vendors["name"].tolist(),
+    )
+
+    vendor = vendors[
+        vendors["name"] == selected_name
+    ]
+    v = vendor.iloc[0]
+
+    st.markdown(
+        f"""
+        <div class="section-card">
+            <div class="section-title">Case File</div>
+            <b>Vendor:</b> {v["name"]}<br>
+            <b>Service:</b> {v["service_type"]}<br>
+            <b>Data accessed:</b> {v["data_accessed"]}<br>
+            <b>Criticality:</b> {v["criticality"]}<br>
+            <b>Status:</b> {v["status"]}<br>
+            <b>Contract end:</b> {v["contract_end_date"]}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.subheader("Your Assessment")
+
+    answer_risk = st.radio(
+        "1. What is the overall risk level?",
+        ["Low", "Medium", "High", "Critical"],
+        horizontal=True,
+    )
+
+    answer_fourth = st.radio(
+        "2. Is there a fourth-party risk?",
+        ["Yes", "No"],
+        horizontal=True,
+    )
+
+    answer_evidence = st.multiselect(
+        "3. Which evidence issues should be investigated?",
+        [
+            "Missing documents",
+            "Expired documents",
+            "Pending documents",
+            "Contract expiry",
+            "Undisclosed subcontractors",
+        ],
+    )
+
+    if st.button("Submit Assessment", type="primary"):
+        model = risk_engine(
+            vendor, documents, subcontractors, requirements
+        )
+
+        actual_risk = model["level"]
+        actual_fourth = (
+            "Yes"
+            if model["hidden_subcontractors"] > 0
+            else "No"
+        )
+
+        expected_evidence = set()
+
+        if model["compliance"]["missing"]:
+            expected_evidence.add("Missing documents")
+        if model["compliance"]["expired"]:
+            expected_evidence.add("Expired documents")
+        if model["compliance"]["pending"]:
+            expected_evidence.add("Pending documents")
+        if model["contract_days"] is not None and model["contract_days"] <= 90:
+            expected_evidence.add("Contract expiry")
+        if model["hidden_subcontractors"]:
+            expected_evidence.add("Undisclosed subcontractors")
+
+        risk_correct = answer_risk == actual_risk
+        fourth_correct = answer_fourth == actual_fourth
+        evidence_correct = expected_evidence == set(answer_evidence)
+
+        st.divider()
+        st.subheader("Assessment Result")
+
+        if risk_correct:
+            st.success(f"✓ Risk level correct: {actual_risk}")
+        else:
+            st.error(
+                f"Risk level: your answer was {answer_risk}; "
+                f"model assessment is {actual_risk}."
+            )
+
+        if fourth_correct:
+            st.success(f"✓ Fourth-party answer correct: {actual_fourth}")
+        else:
+            st.error(
+                f"Fourth-party risk: your answer was {answer_fourth}; "
+                f"model assessment is {actual_fourth}."
+            )
+
+        if evidence_correct:
+            st.success("✓ Evidence issue identification is correct.")
+        else:
+            st.warning(
+                "Evidence issue identification differs from the model."
+            )
+
+        st.markdown(
+            f"""
+            <div class="score-box">
+                <div class="metric-label">Model Risk Score</div>
+                <div class="score-number">{model["score"]}/100</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.write("")
+
+        st.write("**Risk drivers:**")
+        for name, value, maximum in model["drivers"]:
+            st.write(f"- {name}: {value}/{maximum}")
+
+        st.info(
+            "This is a training model, not a production risk methodology. "
+            "In a real organization, scoring should be aligned with approved "
+            "risk appetite, control frameworks and governance."
+        )
 
 
 # ============================================================
@@ -1300,29 +1318,32 @@ elif menu == "Data Import":
     page_header(
         "Administration",
         "Data Import",
-        "Load vendor, evidence and supply-chain data from an Excel workbook.",
+        "Load the training dataset or replace it with your own TPRM case data.",
     )
 
     st.info(
-        "Expected sheets: vendors, documents, subcontractors and document_requirements."
+        "Expected sheets: vendors, documents, subcontractors, "
+        "document_requirements and findings."
     )
 
-    uploaded_file = st.file_uploader(
+    uploaded = st.file_uploader(
         "Upload Excel workbook",
         type=["xlsx"],
     )
 
-    if uploaded_file:
+    if uploaded:
 
         try:
-            xls = pd.ExcelFile(uploaded_file)
+            xls = pd.ExcelFile(uploaded)
 
             available = {
-                name.strip().lower()
-                for name in xls.sheet_names
+                s.strip().lower()
+                for s in xls.sheet_names
             }
 
-            missing = REQUIRED_SHEETS - available
+            # Findings is optional for backward compatibility.
+            required_for_upload = REQUIRED_SHEETS - {"findings"}
+            missing = required_for_upload - available
 
             if missing:
                 st.error(
@@ -1331,16 +1352,12 @@ elif menu == "Data Import":
                 )
                 st.stop()
 
-            st.success("Workbook structure validated successfully.")
-
-            sheets = {}
-
-            for sheet in xls.sheet_names:
-                df = pd.read_excel(
-                    xls,
-                    sheet_name=sheet,
+            sheets = {
+                s.lower(): normalize_columns(
+                    pd.read_excel(xls, sheet_name=s)
                 )
-                sheets[sheet.lower()] = normalize_columns(df)
+                for s in xls.sheet_names
+            }
 
             tabs = st.tabs(
                 [
@@ -1348,6 +1365,7 @@ elif menu == "Data Import":
                     "Documents",
                     "Subcontractors",
                     "Requirements",
+                    "Findings",
                 ]
             )
 
@@ -1360,16 +1378,26 @@ elif menu == "Data Import":
 
             for name, tab in mapping:
                 with tab:
-                    df = sheets[name]
-
                     st.caption(
-                        f"{len(df):,} records · {len(df.columns)} fields"
+                        f'{len(sheets[name]):,} records'
                     )
-
                     st.dataframe(
-                        df,
+                        sheets[name],
                         use_container_width=True,
                         hide_index=True,
+                    )
+
+            with tabs[4]:
+                if "findings" in sheets:
+                    st.dataframe(
+                        sheets["findings"],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.info(
+                        "Findings are generated dynamically; "
+                        "no findings sheet was supplied."
                     )
 
             st.divider()
@@ -1380,13 +1408,19 @@ elif menu == "Data Import":
                 use_container_width=True,
             ):
 
-                for name, df in sheets.items():
-                    if name in REQUIRED_SHEETS:
-                        save_table(df, name)
+                for name in [
+                    "vendors",
+                    "documents",
+                    "subcontractors",
+                    "document_requirements",
+                ]:
+                    save_table(sheets[name], name)
+
+                if "findings" in sheets:
+                    save_table(sheets["findings"], "findings")
 
                 st.success(
-                    "Dataset imported successfully. "
-                    "The TPRM dashboard is now ready."
+                    "Dataset imported successfully."
                 )
 
         except Exception as exc:
