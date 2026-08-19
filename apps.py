@@ -41,90 +41,322 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    .stApp { background:#f5f7fa; color:#172033; }
-    .block-container { max-width:1500px; padding-top:1.4rem; padding-bottom:3rem; }
+    /* =========================================================
+       TPRM RISK LAB V2.1 — Risk Intelligence visual system
+       Navy / slate foundation. Severity colors are reserved
+       for actual risk signals.
+       ========================================================= */
+    .stApp {
+        background:#f3f6fa;
+        color:#172033;
+    }
+    .block-container {
+        max-width:1500px;
+        padding-top:1.35rem;
+        padding-bottom:3.5rem;
+    }
 
     section[data-testid="stSidebar"] {
-        background:#101827;
-        border-right:1px solid #1f2937;
+        background:#0b1220;
+        border-right:1px solid #1b2940;
     }
-    section[data-testid="stSidebar"] * { color:#e5e7eb; }
+    section[data-testid="stSidebar"] * { color:#dbe5f2; }
 
-    h1,h2,h3 { color:#111827; letter-spacing:-.02em; }
+    h1,h2,h3 {
+        color:#0f172a;
+        letter-spacing:-.025em;
+    }
 
     .brand {
-        padding:.5rem 0 1.25rem;
-        border-bottom:1px solid #263244;
-        margin-bottom:1rem;
+        padding:.65rem 0 1.2rem;
+        border-bottom:1px solid #233149;
+        margin-bottom:1.15rem;
     }
-    .brand-title { color:white; font-size:1.25rem; font-weight:800; }
-    .brand-subtitle { color:#94a3b8; font-size:.75rem; margin-top:.15rem; }
+    .brand-mark {
+        display:inline-flex;
+        width:34px;
+        height:34px;
+        align-items:center;
+        justify-content:center;
+        border:1px solid #2f6fed;
+        border-radius:9px;
+        background:#102142;
+        color:#69a0ff;
+        font-size:1rem;
+        margin-right:.55rem;
+        vertical-align:middle;
+    }
+    .brand-title {
+        color:#f8fafc;
+        font-size:1.12rem;
+        font-weight:850;
+        letter-spacing:.045em;
+        vertical-align:middle;
+    }
+    .brand-subtitle {
+        color:#7f91aa;
+        font-size:.7rem;
+        margin-top:.45rem;
+        letter-spacing:.045em;
+        text-transform:uppercase;
+    }
 
     .page-kicker {
-        color:#64748b; font-size:.76rem; font-weight:800;
-        letter-spacing:.12em; text-transform:uppercase;
+        color:#3974c9;
+        font-size:.7rem;
+        font-weight:850;
+        letter-spacing:.14em;
+        text-transform:uppercase;
     }
-    .page-title { font-size:2rem; font-weight:800; margin:.15rem 0; }
-    .page-subtitle { color:#64748b; font-size:.94rem; margin-bottom:1.4rem; }
+    .page-title {
+        font-size:2.05rem;
+        font-weight:850;
+        margin:.12rem 0;
+        color:#0b1424;
+    }
+    .page-subtitle {
+        color:#64748b;
+        font-size:.92rem;
+        margin-bottom:1.35rem;
+    }
 
-    .metric-card,.section-card {
-        background:#fff;
-        border:1px solid #e5e7eb;
-        border-radius:12px;
-        box-shadow:0 1px 2px rgba(15,23,42,.04);
+    .metric-card,.section-card,.hero-card {
+        background:#ffffff;
+        border:1px solid #dbe3ee;
+        border-radius:13px;
+        box-shadow:0 2px 7px rgba(15,23,42,.035);
     }
-    .metric-card { padding:1rem 1.1rem; min-height:118px; }
+    .metric-card {
+        padding:1rem 1.05rem;
+        min-height:108px;
+        position:relative;
+        overflow:hidden;
+    }
+    .metric-card::before {
+        content:"";
+        position:absolute;
+        left:0; top:0; bottom:0;
+        width:3px;
+        background:#3974c9;
+    }
     .metric-label {
-        color:#64748b; font-size:.74rem; font-weight:800;
-        text-transform:uppercase; letter-spacing:.06em;
+        color:#718096;
+        font-size:.68rem;
+        font-weight:850;
+        text-transform:uppercase;
+        letter-spacing:.085em;
     }
-    .metric-value { color:#111827; font-size:1.9rem; font-weight:800; margin-top:.3rem; }
-    .metric-note { color:#94a3b8; font-size:.76rem; margin-top:.15rem; }
-    .section-card { padding:1.2rem; margin-bottom:1rem; }
-    .section-title { font-size:1rem; font-weight:800; color:#111827; margin-bottom:.7rem; }
+    .metric-value {
+        color:#0f172a;
+        font-size:1.75rem;
+        font-weight:850;
+        margin-top:.3rem;
+    }
+    .metric-note {
+        color:#94a3b8;
+        font-size:.73rem;
+        margin-top:.15rem;
+    }
+    .section-card { padding:1.15rem 1.2rem; margin-bottom:1rem; }
+    .section-title {
+        font-size:.82rem;
+        font-weight:850;
+        color:#172033;
+        margin-bottom:.7rem;
+        letter-spacing:.055em;
+        text-transform:uppercase;
+    }
 
-    .risk-critical { color:#b91c1c; }
+    .hero-card {
+        padding:1.25rem 1.35rem;
+        margin-bottom:1rem;
+        background:linear-gradient(135deg,#0d182b 0%,#12243d 100%);
+        border-color:#203654;
+        color:#e7eef8;
+    }
+    .hero-kicker {
+        color:#78a9f5;
+        font-size:.66rem;
+        font-weight:850;
+        letter-spacing:.14em;
+        text-transform:uppercase;
+    }
+    .hero-title {
+        color:#f8fafc;
+        font-size:1.25rem;
+        font-weight:850;
+        margin:.22rem 0;
+    }
+    .hero-copy {
+        color:#9fb0c7;
+        font-size:.82rem;
+        line-height:1.55;
+    }
+    .hero-score {
+        color:#ffffff;
+        font-size:2.65rem;
+        line-height:1;
+        font-weight:900;
+    }
+    .hero-score-label {
+        color:#8ea2bd;
+        font-size:.66rem;
+        font-weight:800;
+        letter-spacing:.08em;
+        text-transform:uppercase;
+    }
+
+    .signal {
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:.75rem;
+        padding:.62rem .72rem;
+        border:1px solid #e2e8f0;
+        border-radius:9px;
+        background:#f8fafc;
+        margin-bottom:.48rem;
+    }
+    .signal-name { color:#334155; font-size:.79rem; font-weight:750; }
+    .signal-value { color:#0f172a; font-size:.78rem; font-weight:850; }
+
+    .risk-critical { color:#b42318; }
     .risk-high { color:#c2410c; }
     .risk-medium { color:#a16207; }
     .risk-low { color:#15803d; }
 
     .pill {
-        display:inline-block; padding:.26rem .62rem; border-radius:999px;
-        font-size:.7rem; font-weight:800;
+        display:inline-block;
+        padding:.24rem .58rem;
+        border-radius:999px;
+        font-size:.67rem;
+        font-weight:850;
+        letter-spacing:.02em;
     }
-    .pill-critical { background:#fee2e2; color:#991b1b; }
+    .pill-critical { background:#fee4e2; color:#b42318; }
     .pill-high { background:#ffedd5; color:#9a3412; }
     .pill-medium { background:#fef3c7; color:#92400e; }
     .pill-low { background:#dcfce7; color:#166534; }
     .pill-received,.pill-closed,.pill-compliant { background:#dcfce7; color:#166534; }
     .pill-pending,.pill-in-progress { background:#fef3c7; color:#92400e; }
-    .pill-expired,.pill-missing,.pill-open,.pill-undisclosed { background:#fee2e2; color:#991b1b; }
+    .pill-expired,.pill-missing,.pill-open,.pill-undisclosed { background:#fee4e2; color:#b42318; }
 
     .finding {
-        border-left:4px solid #dc2626; background:#fff7f7;
-        padding:.75rem 1rem; border-radius:0 8px 8px 0; margin-bottom:.6rem;
+        border-left:3px solid #dc2626;
+        background:#fff8f7;
+        padding:.72rem .9rem;
+        border-radius:0 9px 9px 0;
+        margin-bottom:.55rem;
     }
-    .finding.medium { border-left-color:#ca8a04; background:#fffdf3; }
-    .finding.low { border-left-color:#16a34a; background:#f4fff7; }
-    .finding-title { font-weight:750; color:#1f2937; }
-    .finding-detail { color:#64748b; font-size:.8rem; margin-top:.12rem; }
+    .finding.medium { border-left-color:#ca8a04; background:#fffcf2; }
+    .finding.low { border-left-color:#16a34a; background:#f5fff8; }
+    .finding-title { font-weight:800; color:#1f2937; }
+    .finding-detail { color:#64748b; font-size:.78rem; margin-top:.12rem; }
 
     .score-box {
-        background:#fff; border:1px solid #e5e7eb; border-radius:12px;
-        padding:1.15rem;
+        background:#0d182b;
+        border:1px solid #203654;
+        border-radius:13px;
+        padding:1.2rem;
     }
-    .score-number { font-size:2.5rem; font-weight:850; color:#111827; }
+    .score-number { font-size:2.55rem; font-weight:900; color:#fff; }
+    .score-caption {
+        color:#91a4be;
+        font-size:.68rem;
+        font-weight:800;
+        text-transform:uppercase;
+        letter-spacing:.08em;
+    }
     .driver-row {
-        display:flex; justify-content:space-between; padding:.42rem 0;
-        border-bottom:1px solid #f1f5f9; font-size:.83rem;
+        display:flex;
+        justify-content:space-between;
+        padding:.48rem 0;
+        border-bottom:1px solid #edf2f7;
+        font-size:.81rem;
     }
     .driver-row:last-child { border-bottom:0; }
     .driver-name { color:#475569; }
-    .driver-score { font-weight:800; color:#111827; }
+    .driver-score { font-weight:850; color:#111827; }
 
-    .sidebar-caption { color:#64748b; font-size:.72rem; margin-top:1.5rem; line-height:1.5; }
-    div[data-testid="stDataFrame"] { border:1px solid #e5e7eb; border-radius:10px; overflow:hidden; }
-    .stButton > button { border-radius:8px; font-weight:700; }
+    .risk-flow {
+        display:grid;
+        grid-template-columns:1fr auto 1fr auto 1fr;
+        gap:.45rem;
+        align-items:stretch;
+        margin:.2rem 0 1rem;
+    }
+    .risk-node {
+        border:1px solid #dbe3ee;
+        border-radius:10px;
+        padding:.78rem;
+        background:#fff;
+    }
+    .risk-node-label {
+        color:#718096;
+        font-size:.64rem;
+        font-weight:850;
+        text-transform:uppercase;
+        letter-spacing:.08em;
+    }
+    .risk-node-value {
+        color:#0f172a;
+        font-size:1.12rem;
+        font-weight:850;
+        margin-top:.18rem;
+    }
+    .risk-arrow {
+        display:flex;
+        align-items:center;
+        color:#7c8da5;
+        font-weight:900;
+    }
+
+    .treatment-card {
+        border:1px solid #dbe3ee;
+        border-radius:10px;
+        background:#f8fafc;
+        padding:.8rem .9rem;
+        margin-bottom:.5rem;
+    }
+    .treatment-title { color:#172033; font-weight:850; font-size:.8rem; }
+    .treatment-copy { color:#64748b; font-size:.75rem; margin-top:.15rem; line-height:1.45; }
+
+    .attention-row {
+        display:grid;
+        grid-template-columns:1.6fr .7fr .55fr;
+        gap:.8rem;
+        align-items:center;
+        padding:.72rem 0;
+        border-bottom:1px solid #edf2f7;
+    }
+    .attention-row:last-child { border-bottom:0; }
+    .attention-name { color:#172033; font-weight:800; font-size:.8rem; }
+    .attention-meta { color:#64748b; font-size:.7rem; }
+    .attention-score { text-align:right; font-weight:900; color:#0f172a; }
+
+    .sidebar-caption {
+        color:#64748b;
+        font-size:.7rem;
+        margin-top:1.5rem;
+        line-height:1.55;
+    }
+    div[data-testid="stDataFrame"] {
+        border:1px solid #dbe3ee;
+        border-radius:10px;
+        overflow:hidden;
+    }
+    .stButton > button {
+        border-radius:8px;
+        font-weight:750;
+        border-color:#cbd5e1;
+    }
+    button[kind="primary"] {
+        background:#1d5fbd;
+        border-color:#1d5fbd;
+    }
+    div[data-baseweb="select"] > div {
+        border-radius:8px;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -550,8 +782,11 @@ findings_db = load_data("findings")
 st.sidebar.markdown(
     """
     <div class="brand">
-        <div class="brand-title">🛡️ TPRM RISK LAB</div>
-        <div class="brand-subtitle">Third-Party Risk Management</div>
+        <div>
+            <span class="brand-mark">◆</span>
+            <span class="brand-title">TPRM RISK LAB</span>
+        </div>
+        <div class="brand-subtitle">Third-Party Risk Intelligence</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -589,9 +824,9 @@ st.sidebar.markdown(
 if menu == "Executive Dashboard":
 
     page_header(
-        "Executive Overview",
+        "Portfolio Intelligence",
         "TPRM Risk Overview",
-        "Portfolio exposure, evidence quality, remediation and supply-chain risk.",
+        "Executive view of exposure, evidence quality, supply-chain dependencies and remediation pressure.",
     )
 
     if vendors.empty:
@@ -612,6 +847,12 @@ if menu == "Executive Dashboard":
             "Score": r["score"],
             "Compliance": r["compliance"]["percentage"],
             "Hidden": r["hidden_subcontractors"],
+            "Findings": len(generate_findings(
+                pd.DataFrame([vendor]),
+                documents,
+                subcontractors,
+                requirements,
+            )),
         })
 
     register = pd.DataFrame(results)
@@ -619,11 +860,10 @@ if menu == "Executive Dashboard":
     critical = int(
         (vendors["criticality"].astype(str).str.lower() == "critical").sum()
     )
-    high_risk = int(
-        register["Risk"].isin(["Critical", "High"]).sum()
-    )
+    high_risk = int(register["Risk"].isin(["Critical", "High"]).sum())
     avg_compliance = int(register["Compliance"].mean())
     total_hidden = int(register["Hidden"].sum())
+    open_findings = int(register["Findings"].sum())
 
     overall = (
         "Critical" if high_risk >= 8
@@ -632,23 +872,47 @@ if menu == "Executive Dashboard":
         else "Low"
     )
 
+    # Executive signal — intentionally not another row of generic KPI cards.
+    score_proxy = int(register["Score"].mean()) if not register.empty else 0
+    st.markdown(
+        f"""
+        <div class="hero-card">
+            <div class="hero-kicker">Executive Signal · Portfolio Posture</div>
+            <div style="display:flex;justify-content:space-between;gap:2rem;align-items:end;">
+                <div style="flex:1;">
+                    <div class="hero-title">Risk exposure requires active management</div>
+                    <div class="hero-copy">
+                        {high_risk} of {len(vendors)} vendors are currently High or Critical risk.
+                        Evidence compliance is {avg_compliance}% and {total_hidden} undisclosed
+                        fourth-party relationship(s) are visible in the current dataset.
+                    </div>
+                </div>
+                <div style="min-width:150px;text-align:right;">
+                    <div class="hero-score">{score_proxy}</div>
+                    <div class="hero-score-label">Avg. Risk Score / 100</div>
+                    <div style="margin-top:.45rem;">{pill(overall)}</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     cols = st.columns(5)
     cards = [
-        ("Overall Exposure", overall, "Portfolio posture"),
         ("Vendors", len(vendors), "Assessment population"),
         ("Critical", critical, "Inherent criticality"),
-        ("High/Critical Risk", high_risk, "Immediate attention"),
-        ("Evidence Compliance", f"{avg_compliance}%", "Portfolio average"),
+        ("High / Critical", high_risk, "Immediate attention"),
+        ("Evidence", f"{avg_compliance}%", "Portfolio compliance"),
+        ("Open Findings", open_findings, "Remediation pressure"),
     ]
-
     for col, (label, value, note) in zip(cols, cards):
         with col:
-            css = f"risk-{str(value).lower()}" if label == "Overall Exposure" else ""
             st.markdown(
                 f"""
                 <div class="metric-card">
                     <div class="metric-label">{label}</div>
-                    <div class="metric-value {css}">{value}</div>
+                    <div class="metric-value">{value}</div>
                     <div class="metric-note">{note}</div>
                 </div>
                 """,
@@ -657,58 +921,94 @@ if menu == "Executive Dashboard":
 
     st.write("")
 
-    left, right = st.columns(2)
+    left, right = st.columns([1.05, .95])
 
     with left:
         st.markdown(
-            '<div class="section-card"><div class="section-title">Risk Distribution</div>',
+            '<div class="section-card"><div class="section-title">Risk Exposure</div>',
             unsafe_allow_html=True,
         )
         distribution = register["Risk"].value_counts().reindex(
             ["Critical", "High", "Medium", "Low"],
             fill_value=0,
         )
-        st.bar_chart(distribution)
+        st.bar_chart(distribution, height=250)
         st.markdown("</div>", unsafe_allow_html=True)
 
     with right:
         st.markdown(
-            '<div class="section-card"><div class="section-title">Top Risk Vendors</div>',
+            '<div class="section-card"><div class="section-title">Executive Attention</div>',
             unsafe_allow_html=True,
         )
-        top = register.sort_values("Score", ascending=False).head(8)
-        st.dataframe(
-            top,
-            use_container_width=True,
-            hide_index=True,
-        )
+        attention = register[
+            register["Risk"].isin(["Critical", "High"])
+        ].sort_values("Score", ascending=False).head(6)
+
+        if attention.empty:
+            st.success("No High or Critical risk vendors identified.")
+        else:
+            for _, row in attention.iterrows():
+                st.markdown(
+                    f"""
+                    <div class="attention-row">
+                        <div>
+                            <div class="attention-name">{row["Vendor"]}</div>
+                            <div class="attention-meta">
+                                {row["Risk"]} risk · Evidence {row["Compliance"]}% ·
+                                {row["Findings"]} finding(s)
+                            </div>
+                        </div>
+                        <div>{pill(row["Risk"])}</div>
+                        <div class="attention-score">{row["Score"]}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
         st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown(
-        '<div class="section-card"><div class="section-title">Executive Attention</div>',
+        '<div class="section-card"><div class="section-title">Risk Drivers & Action Signals</div>',
         unsafe_allow_html=True,
     )
 
-    attention = register[
-        register["Risk"].isin(["Critical", "High"])
-    ].sort_values("Score", ascending=False)
-
-    if attention.empty:
-        st.success("No High or Critical risk vendors identified.")
-    else:
-        st.dataframe(
-            attention,
-            use_container_width=True,
-            hide_index=True,
-        )
+    signal_cols = st.columns(4)
+    signals = [
+        ("Evidence gaps", int((register["Compliance"] < 100).sum()), "Vendors below full evidence coverage"),
+        ("Expired / missing", int(sum(
+            len(risk_engine(
+                pd.DataFrame([v]),
+                documents,
+                subcontractors,
+                requirements,
+            )["compliance"]["expired"]) +
+            len(risk_engine(
+                pd.DataFrame([v]),
+                documents,
+                subcontractors,
+                requirements,
+            )["compliance"]["missing"])
+            for _, v in vendors.iterrows()
+        )), "Evidence requiring remediation"),
+        ("4th-party exposure", total_hidden, "Undisclosed relationships"),
+        ("Portfolio posture", overall, "Current aggregate risk signal"),
+    ]
+    for col, (name, value, copy) in zip(signal_cols, signals):
+        with col:
+            st.markdown(
+                f"""
+                <div class="signal">
+                    <div class="signal-name">{name}<br><span style="color:#94a3b8;font-weight:500;">{copy}</span></div>
+                    <div class="signal-value">{value}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+    st.markdown("</div>", unsafe_allow_html=True)
 
     if total_hidden:
         st.warning(
-            f"{total_hidden} undisclosed fourth-party relationship(s) "
-            "require review across the portfolio."
+            f"{total_hidden} undisclosed fourth-party relationship(s) require review across the portfolio."
         )
-
-    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ============================================================
@@ -788,53 +1088,99 @@ elif menu == "Vendor Portfolio":
             vendor, documents, subcontractors, requirements
         )
 
+        # Vendor profile — designed as a risk case file rather than a generic dashboard.
         st.markdown(
-            f"## {v['name']}"
+            f"""
+            <div class="hero-card">
+                <div class="hero-kicker">Vendor Risk Profile · {v["status"]}</div>
+                <div style="display:flex;justify-content:space-between;gap:2rem;align-items:center;">
+                    <div>
+                        <div class="hero-title">{v["name"]}</div>
+                        <div class="hero-copy">
+                            {v["service_type"]} · {v["data_accessed"]}<br>
+                            Criticality: <strong>{v["criticality"]}</strong>
+                        </div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div class="hero-score">{risk["score"]}</div>
+                        <div class="hero-score-label">Risk Score / 100</div>
+                        <div style="margin-top:.4rem;">{pill(risk["level"])}</div>
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-        st.caption(
-            f"{v['service_type']} · {v['data_accessed']}"
+
+        # Risk lifecycle: Inherent → controls/evidence → residual.
+        # The current engine does not calculate a separate residual score,
+        # so the displayed residual signal is explicitly derived from the
+        # current risk score rather than pretending a new methodology exists.
+        inherent_score = risk["drivers"][0][1] + risk["drivers"][1][1]
+        residual_score = risk["score"]
+
+        st.markdown(
+            f"""
+            <div class="section-card">
+                <div class="section-title">Risk Lifecycle</div>
+                <div class="risk-flow">
+                    <div class="risk-node">
+                        <div class="risk-node-label">Inherent Risk</div>
+                        <div class="risk-node-value">{inherent_score}/50</div>
+                    </div>
+                    <div class="risk-arrow">→</div>
+                    <div class="risk-node">
+                        <div class="risk-node-label">Controls / Evidence</div>
+                        <div class="risk-node-value">{risk["compliance"]["percentage"]}% coverage</div>
+                    </div>
+                    <div class="risk-arrow">→</div>
+                    <div class="risk-node">
+                        <div class="risk-node-label">Current Exposure</div>
+                        <div class="risk-node-value">{residual_score}/100</div>
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Overall Risk", risk["level"])
-        c2.metric("Risk Score", f"{risk['score']}/100")
-        c3.metric("Evidence", f"{risk['compliance']['percentage']}%")
-        c4.metric("4th Parties", risk["hidden_subcontractors"])
-
-        st.write("")
-
-        left, right = st.columns([1, 1])
+        left, right = st.columns([1.05, .95])
 
         with left:
             st.markdown(
                 '<div class="section-card"><div class="section-title">Risk Drivers</div>',
                 unsafe_allow_html=True,
             )
-
             for name, value, maximum in risk["drivers"]:
+                pct = int(value / maximum * 100) if maximum else 0
                 st.markdown(
                     f"""
                     <div class="driver-row">
                         <span class="driver-name">{name}</span>
                         <span class="driver-score">{value}/{maximum}</span>
                     </div>
+                    <div style="height:4px;background:#edf2f7;border-radius:99px;margin:-.25rem 0 .35rem;">
+                        <div style="width:{pct}%;height:4px;background:#3974c9;border-radius:99px;"></div>
+                    </div>
                     """,
                     unsafe_allow_html=True,
                 )
-
             st.markdown("</div>", unsafe_allow_html=True)
 
         with right:
             st.markdown(
-                '<div class="section-card"><div class="section-title">Contract & Status</div>',
+                '<div class="section-card"><div class="section-title">Contract & Operational Context</div>',
                 unsafe_allow_html=True,
             )
-
-            st.write(f"**Criticality:** {v['criticality']}")
-            st.write(f"**Vendor status:** {v['status']}")
-            st.write(f"**Onboarded:** {v['onboarded_date']}")
-            st.write(f"**Contract end:** {v['contract_end_date']}")
-
+            st.markdown(
+                f"""
+                <div class="signal"><span class="signal-name">Criticality</span><span class="signal-value">{v["criticality"]}</span></div>
+                <div class="signal"><span class="signal-name">Vendor status</span><span class="signal-value">{v["status"]}</span></div>
+                <div class="signal"><span class="signal-name">Onboarded</span><span class="signal-value">{v["onboarded_date"]}</span></div>
+                <div class="signal"><span class="signal-name">Contract end</span><span class="signal-value">{v["contract_end_date"]}</span></div>
+                """,
+                unsafe_allow_html=True,
+            )
             days = risk["contract_days"]
             if days is not None:
                 if days < 0:
@@ -843,15 +1189,110 @@ elif menu == "Vendor Portfolio":
                     st.warning(f"Contract expires in {days} days.")
                 else:
                     st.success(f"{days} days remaining.")
-
             st.markdown("</div>", unsafe_allow_html=True)
 
-        st.subheader("Open Findings")
+        st.markdown(
+            '<div class="section-card"><div class="section-title">Evidence Posture</div>',
+            unsafe_allow_html=True,
+        )
+        ec1, ec2, ec3, ec4 = st.columns(4)
+        ec1.metric("Coverage", f'{risk["compliance"]["percentage"]}%')
+        ec2.metric("Received", risk["compliance"]["received"])
+        ec3.metric("Missing", len(risk["compliance"]["missing"]))
+        ec4.metric("Expired", len(risk["compliance"]["expired"]))
+
+        evidence_items = []
+        for doc in risk["compliance"]["missing"]:
+            evidence_items.append(("Missing", doc))
+        for doc in risk["compliance"]["expired"]:
+            evidence_items.append(("Expired", doc))
+        for doc in risk["compliance"]["pending"]:
+            evidence_items.append(("Pending", doc))
+
+        if evidence_items:
+            for status, doc in evidence_items:
+                st.markdown(
+                    f"""
+                    <div class="signal">
+                        <span class="signal-name">{doc}</span>
+                        <span>{pill(status)}</span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.success("No evidence gaps identified by the current compliance engine.")
+        st.markdown("</div>", unsafe_allow_html=True)
 
         generated = generate_findings(
             vendor, documents, subcontractors, requirements
         )
 
+        st.markdown(
+            '<div class="section-card"><div class="section-title">Recommended Risk Treatment</div>',
+            unsafe_allow_html=True,
+        )
+
+        if risk["compliance"]["missing"] or risk["compliance"]["expired"]:
+            treatment_title = "Mitigate — remediate evidence gaps"
+            treatment_copy = (
+                "Prioritize missing or expired evidence before risk acceptance. "
+                "Request current artifacts, validate scope and record remediation evidence."
+            )
+        elif risk["hidden_subcontractors"]:
+            treatment_title = "Mitigate — investigate fourth-party exposure"
+            treatment_copy = (
+                "Obtain the complete subcontractor chain, validate disclosure and "
+                "assess whether the dependency changes the vendor's risk posture."
+            )
+        elif risk["contract_days"] is not None and risk["contract_days"] <= 90:
+            treatment_title = "Mitigate — contract review"
+            treatment_copy = (
+                "Trigger contract-owner review and confirm renewal, termination "
+                "and right-to-audit considerations before expiry."
+            )
+        elif risk["level"] in ["Critical", "High"]:
+            treatment_title = "Mitigate / Accept — governance decision required"
+            treatment_copy = (
+                "Risk remains above the lower-risk bands. Document treatment, "
+                "owner and due date; escalate for formal risk acceptance where appropriate."
+            )
+        else:
+            treatment_title = "Monitor — maintain evidence posture"
+            treatment_copy = (
+                "No immediate high-severity gap is generated by the current model. "
+                "Continue periodic monitoring and evidence refresh."
+            )
+
+        st.markdown(
+            f"""
+            <div class="treatment-card">
+                <div class="treatment-title">{treatment_title}</div>
+                <div class="treatment-copy">{treatment_copy}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if generated:
+            st.markdown(
+                f"""
+                <div class="treatment-card">
+                    <div class="treatment-title">Open findings · {len(generated)}</div>
+                    <div class="treatment-copy">
+                        Findings are generated dynamically from the current evidence,
+                        contract and fourth-party data.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown(
+            '<div class="section-card"><div class="section-title">Open Findings</div>',
+            unsafe_allow_html=True,
+        )
         if not generated:
             st.success("No findings generated for this vendor.")
         else:
@@ -870,6 +1311,8 @@ elif menu == "Vendor Portfolio":
                     """,
                     unsafe_allow_html=True,
                 )
+        st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 # ============================================================
@@ -1310,6 +1753,11 @@ elif menu == "Assessment Simulation":
             "risk appetite, control frameworks and governance."
         )
 
+
+
+# ============================================================
+# V2.1 VISUAL NOTE
+# ============================================================
 
 # ============================================================
 # DATA IMPORT
