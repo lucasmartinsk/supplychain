@@ -12,8 +12,8 @@ from reportlab.pdfgen import canvas
 
 
 # ============================================================
-# TPRM RISK LAB â€” V3
-# Vendor Risk â€¢ Evidence â€¢ Findings â€¢ Fourth Parties â€¢ Sample Docs
+# TPRM RISK LAB - V3
+# Vendor Risk - Evidence - Findings - Fourth Parties - Sample Docs
 # Training / Portfolio Project
 # ============================================================
 
@@ -34,14 +34,14 @@ REQUIRED_SHEETS = {
 
 st.set_page_config(
     page_title="IT Risk / GRC Lab",
-    page_icon="â—†",
+    page_icon="#",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 
 # ============================================================
-# DESIGN SYSTEM â€” "SIGNAL ROOM"
+# DESIGN SYSTEM - "SIGNAL ROOM"
 # Dark analyst-console theme. Monospace for data/numbers,
 # sans-serif for prose. Sharp corners, restrained accent color,
 # muted (not neon) severity palette. Intentionally not another
@@ -56,7 +56,7 @@ st.markdown(
     html, body, [class*="css"] { font-family:'Inter', sans-serif; }
     .mono { font-family:'JetBrains Mono', monospace; }
 
-    /* Light content area, dark navy sidebar for anchor/contrast â€” reads as a
+    /* Light content area, dark navy sidebar for anchor/contrast - reads as a
        professional analytical tool without the readability issues of full dark mode. */
     .stApp { background:#f4f6fa; color:#1a2233; }
     .block-container { max-width:1520px; padding-top:1.3rem; padding-bottom:3.5rem; }
@@ -99,7 +99,7 @@ st.markdown(
     .page-title { font-size:1.9rem; font-weight:800; margin:.15rem 0; color:#0f1729; }
     .page-subtitle { color:#5b6478; font-size:.88rem; margin-bottom:1.3rem; }
 
-    /* Cards â€” sharp corners, hairline borders, minimal shadow */
+    /* Cards - sharp corners, hairline borders, minimal shadow */
     .metric-card, .section-card, .console-card {
         background:#ffffff;
         border:1px solid #dde2ec;
@@ -166,7 +166,7 @@ st.markdown(
     .risk-medium { color:#96790f; }
     .risk-low { color:#1f7a4d; }
 
-    /* Badges: small rectangles with a left tick â€” light backgrounds, dark readable text */
+    /* Badges: small rectangles with a left tick - light backgrounds, dark readable text */
     .badge {
         display:inline-flex; align-items:center; gap:.35rem;
         padding:.22rem .5rem; border-radius:4px;
@@ -449,7 +449,7 @@ def days_to_contract_end(value):
 MOCK_TEMPLATES = {
     "ISO 27001 Certificate": {
         "heading": "CERTIFICATE OF REGISTRATION",
-        "subheading": "ISO/IEC 27001:2022 â€” Information Security Management System",
+        "subheading": "ISO/IEC 27001:2022 - Information Security Management System",
         "body": [
             "This is to certify that the Information Security Management System of:",
             "",
@@ -466,7 +466,7 @@ MOCK_TEMPLATES = {
     },
     "SOC 2 Report": {
         "heading": "SOC 2 TYPE II REPORT",
-        "subheading": "Independent Service Auditor's Report â€” Security, Availability, Confidentiality",
+        "subheading": "Independent Service Auditor's Report - Security, Availability, Confidentiality",
         "body": [
             "Scope: This report addresses the suitability of the design and operating",
             "effectiveness of controls at [VENDOR NAME] relevant to the Trust Services",
@@ -477,14 +477,14 @@ MOCK_TEMPLATES = {
             "effectively to provide reasonable assurance that the criteria were met",
             "throughout the specified period.",
             "",
-            "Section II â€” Description of the System   ................ page 4",
-            "Section III â€” Trust Services Criteria & Controls ......... page 9",
-            "Section IV â€” Tests of Controls and Results ............... page 15",
+            "Section II - Description of the System   ................ page 4",
+            "Section III - Trust Services Criteria & Controls ......... page 9",
+            "Section IV - Tests of Controls and Results ............... page 15",
         ],
     },
     "DPA": {
         "heading": "DATA PROCESSING AGREEMENT",
-        "subheading": "Annex to the Master Services Agreement â€” GDPR Art. 28",
+        "subheading": "Annex to the Master Services Agreement - GDPR Art. 28",
         "body": [
             "This Data Processing Agreement (\"DPA\") is entered into between:",
             "",
@@ -524,7 +524,7 @@ def generate_mock_document(doc_type):
     Generates an illustrative, clearly-watermarked SAMPLE PDF so someone who
     has never seen a real ISO 27001 / SOC 2 / DPA / BCP document can
     understand its typical structure. This is NOT a valid certificate or
-    legal document of any kind â€” every page carries a disclaimer.
+    legal document of any kind - every page carries a disclaimer.
     """
     template = MOCK_TEMPLATES.get(doc_type)
     if template is None:
@@ -539,7 +539,7 @@ def generate_mock_document(doc_type):
     c.setFillColor(colors.Color(0.85, 0.85, 0.85))
     c.translate(width / 2, height / 2)
     c.rotate(45)
-    c.drawCentredString(0, 0, "SAMPLE â€” ILLUSTRATIVE ONLY")
+    c.drawCentredString(0, 0, "SAMPLE - ILLUSTRATIVE ONLY")
     c.restoreState()
 
     c.setFillColor(colors.HexColor("#12171f"))
@@ -584,7 +584,7 @@ def document_status(vendor_id, doc_type, documents):
 
     A document whose latest row has status 'Received' but whose
     expiry_date has already passed is reported as 'Expired', not
-    silently as 'Missing' â€” the two mean different things for
+    silently as 'Missing' - the two mean different things for
     remediation ownership.
     """
     rows = documents[
@@ -863,10 +863,10 @@ st.sidebar.markdown(
     """
     <div class="brand">
         <div>
-            <span class="brand-mark">â—†</span>
+            <span class="brand-mark">#</span>
             <span class="brand-title">IT RISK / GRC LAB</span>
         </div>
-        <div class="brand-subtitle">Technology Risk Â· Cyber GRC Â· TPRM</div>
+        <div class="brand-subtitle">Technology Risk - Cyber GRC - TPRM</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -892,7 +892,7 @@ st.sidebar.markdown(
     """
     <div class="sidebar-caption">
         Portfolio project & practical training lab<br>
-        IT Risk â€¢ Cyber GRC â€¢ TPRM
+        IT Risk - Cyber GRC - TPRM
     </div>
     """,
     unsafe_allow_html=True,
@@ -943,7 +943,7 @@ if menu == "Executive Dashboard":
     st.markdown(
         f"""
         <div class="console-card">
-            <div class="console-kicker">Executive Signal Â· Portfolio Posture</div>
+            <div class="console-kicker">Executive Signal - Portfolio Posture</div>
             <div style="display:flex;justify-content:space-between;gap:2rem;align-items:end;">
                 <div style="flex:1;">
                     <div class="console-title">Risk exposure requires active management</div>
@@ -1019,7 +1019,7 @@ if menu == "Executive Dashboard":
                         <div>
                             <div class="attention-name">{row["Vendor"]}</div>
                             <div class="attention-meta">
-                                {row["Risk"]} risk Â· Evidence {row["Compliance"]}% Â·
+                                {row["Risk"]} risk - Evidence {row["Compliance"]}% -
                                 {row["Findings"]} finding(s)
                             </div>
                         </div>
@@ -1088,12 +1088,12 @@ elif menu == "Vendor Portfolio":
         st.markdown(
             f"""
             <div class="console-card">
-                <div class="console-kicker">Vendor Risk Profile Â· {v["status"]}</div>
+                <div class="console-kicker">Vendor Risk Profile - {v["status"]}</div>
                 <div style="display:flex;justify-content:space-between;gap:2rem;align-items:center;">
                     <div>
                         <div class="console-title">{v["name"]}</div>
                         <div class="console-copy">
-                            {v["service_type"]} Â· {v["data_accessed"]}<br>
+                            {v["service_type"]} - {v["data_accessed"]}<br>
                             Criticality: <strong>{v["criticality"]}</strong>
                         </div>
                     </div>
@@ -1120,12 +1120,12 @@ elif menu == "Vendor Portfolio":
                         <div class="risk-node-label">Inherent Risk</div>
                         <div class="risk-node-value">{inherent_score}/50</div>
                     </div>
-                    <div class="risk-arrow">â†’</div>
+                    <div class="risk-arrow">-></div>
                     <div class="risk-node">
                         <div class="risk-node-label">Controls / Evidence</div>
                         <div class="risk-node-value">{risk["compliance"]["percentage"]}% coverage</div>
                     </div>
-                    <div class="risk-arrow">â†’</div>
+                    <div class="risk-arrow">-></div>
                     <div class="risk-node">
                         <div class="risk-node-label">Current Exposure</div>
                         <div class="risk-node-value">{residual_score}/100</div>
@@ -1213,7 +1213,7 @@ elif menu == "Vendor Portfolio":
                     """,
                     unsafe_allow_html=True,
                 )
-                with st.expander(f"Attach / view file â€” {doc}"):
+                with st.expander(f"Attach / view file - {doc}"):
                     if attached is not None:
                         st.caption(f"Currently attached: {attached['filename']} ({attached['uploaded_at']})")
                         render_file_preview(attached, height=350)
@@ -1235,31 +1235,31 @@ elif menu == "Vendor Portfolio":
             unsafe_allow_html=True,
         )
         if risk["compliance"]["missing"] or risk["compliance"]["expired"]:
-            treatment_title = "Mitigate â€” remediate evidence gaps"
+            treatment_title = "Mitigate - remediate evidence gaps"
             treatment_copy = (
                 "Prioritize missing or expired evidence before risk acceptance. "
                 "Request current artifacts, validate scope and record remediation evidence."
             )
         elif risk["hidden_subcontractors"]:
-            treatment_title = "Mitigate â€” investigate fourth-party exposure"
+            treatment_title = "Mitigate - investigate fourth-party exposure"
             treatment_copy = (
                 "Obtain the complete subcontractor chain, validate disclosure and "
                 "assess whether the dependency changes the vendor's risk posture."
             )
         elif risk["contract_days"] is not None and risk["contract_days"] <= 90:
-            treatment_title = "Mitigate â€” contract review"
+            treatment_title = "Mitigate - contract review"
             treatment_copy = (
                 "Trigger contract-owner review and confirm renewal, termination "
                 "and right-to-audit considerations before expiry."
             )
         elif risk["level"] in ["Critical", "High"]:
-            treatment_title = "Mitigate / Accept â€” governance decision required"
+            treatment_title = "Mitigate / Accept - governance decision required"
             treatment_copy = (
                 "Risk remains above the lower-risk bands. Document treatment, "
                 "owner and due date; escalate for formal risk acceptance where appropriate."
             )
         else:
-            treatment_title = "Monitor â€” maintain evidence posture"
+            treatment_title = "Monitor - maintain evidence posture"
             treatment_copy = (
                 "No immediate high-severity gap is generated by the current model. "
                 "Continue periodic monitoring and evidence refresh."
@@ -1288,7 +1288,7 @@ elif menu == "Vendor Portfolio":
                 st.markdown(
                     f"""
                     <div class="finding {cls}">
-                        <div class="finding-title">{f["severity"]} Â· {f["finding_type"]}</div>
+                        <div class="finding-title">{f["severity"]} - {f["finding_type"]}</div>
                         <div class="finding-detail">{f["description"]}</div>
                     </div>
                     """,
@@ -1423,9 +1423,9 @@ elif menu == "Fourth-Party Risk":
         st.markdown(
             f"""
             <div class="finding">
-                <div class="finding-title">{row["name"]} â†’ {row["subcontractor_name"]}</div>
+                <div class="finding-title">{row["name"]} -> {row["subcontractor_name"]}</div>
                 <div class="finding-detail">
-                    {row["service_provided"]} Â· {row["criticality"]} primary vendor Â· Undisclosed relationship
+                    {row["service_provided"]} - {row["criticality"]} primary vendor - Undisclosed relationship
                 </div>
             </div>
             """,
@@ -1442,7 +1442,7 @@ elif menu == "Document Compliance":
     page_header(
         "Evidence Management",
         "Document Compliance",
-        "Assess whether required evidence is present, valid and current â€” and attach the actual files.",
+        "Assess whether required evidence is present, valid and current - and attach the actual files.",
     )
 
     if vendors.empty:
@@ -1489,7 +1489,7 @@ elif menu == "Document Compliance":
     st.markdown('<div class="section-card"><div class="section-title">Required Evidence</div>', unsafe_allow_html=True)
     for doc, status_ in rows:
         attached = get_document_file(vendor_id, doc)
-        attach_tag = " Â· file attached" if attached is not None else ""
+        attach_tag = " - file attached" if attached is not None else ""
         st.markdown(
             f"""
             <div class="signal">
@@ -1499,7 +1499,7 @@ elif menu == "Document Compliance":
             """,
             unsafe_allow_html=True,
         )
-        with st.expander(f"Attach / view file â€” {doc}"):
+        with st.expander(f"Attach / view file - {doc}"):
             if attached is not None:
                 st.caption(f"Currently attached: {attached['filename']} ({attached['uploaded_at']})")
                 render_file_preview(attached, height=380)
@@ -1551,7 +1551,7 @@ elif menu == "Sample Document Library":
     )
 
     st.warning(
-        "âš ï¸ These are fictional, generated examples for training purposes only â€” "
+        "WARNING These are fictional, generated examples for training purposes only - "
         "not issued by any certification body and not valid for any real assessment."
     )
 
@@ -1664,17 +1664,17 @@ elif menu == "Assessment Simulation":
         st.subheader("Assessment Result")
 
         if risk_correct:
-            st.success(f"âœ“ Risk level correct: {actual_risk}")
+            st.success(f"OK Risk level correct: {actual_risk}")
         else:
             st.error(f"Risk level: your answer was {answer_risk}; model assessment is {actual_risk}.")
 
         if fourth_correct:
-            st.success(f"âœ“ Fourth-party answer correct: {actual_fourth}")
+            st.success(f"OK Fourth-party answer correct: {actual_fourth}")
         else:
             st.error(f"Fourth-party risk: your answer was {answer_fourth}; model assessment is {actual_fourth}.")
 
         if evidence_correct:
-            st.success("âœ“ Evidence issue identification is correct.")
+            st.success("OK Evidence issue identification is correct.")
         else:
             st.warning("Evidence issue identification differs from the model.")
 
@@ -1716,7 +1716,7 @@ elif menu == "IT Risk / GRC Practice Lab":
         """
         <div class="console-card">
             <div class="console-kicker">How to use this lab</div>
-            <div class="console-title">Learn â†’ Read â†’ Investigate â†’ Assess</div>
+            <div class="console-title">Learn -> Read -> Investigate -> Assess</div>
             <div class="console-copy">
                 You are not expected to understand an unfamiliar technical screen immediately.
                 Start with <strong>Learn the Environment</strong>, then use the guided questions.
@@ -1728,7 +1728,7 @@ elif menu == "IT Risk / GRC Practice Lab":
     )
 
     practice_cases = {
-        "IAM-001 Â· Non-human identity with static secret": {
+        "IAM-001 - Non-human identity with static secret": {
             "domain": "IAM / Non-human identities",
             "difficulty": "Foundation",
             "learning_goal": "Understand how an application can have its own identity and authenticate without a human user or MFA.",
@@ -1741,8 +1741,8 @@ elif menu == "IT Risk / GRC Practice Lab":
             "glossary": [
                 ("Service principal", "An identity representing an application/service rather than a person."),
                 ("Non-human identity", "An account or identity used by software, automation or a workload."),
-                ("Client ID", "The public identifier of the application identity â€” similar to a username."),
-                ("Client secret", "A secret credential used by the application to prove its identity â€” similar to a password."),
+                ("Client ID", "The public identifier of the application identity - similar to a username."),
+                ("Client secret", "A secret credential used by the application to prove its identity - similar to a password."),
                 ("Key Vault", "A protected Azure service used to store secrets, keys and certificates."),
                 ("API permission", "Defines what the application is allowed to do in another service."),
                 ("Managed Identity", "An Azure-managed application identity that can avoid manually storing/rotating a client secret."),
@@ -1851,12 +1851,12 @@ elif menu == "IT Risk / GRC Practice Lab":
                 "DORA": "ICT risk-management controls around identity, access, secure configuration, protection and monitoring.",
                 "NIS2": "Cybersecurity risk-management measures including access control, asset management and secure operation.",
                 "ISO 27001": "Identity management, authentication information, access rights, privileged access, logging and monitoring.",
-                "IT Risk": "IAM Â· workload identity Â· secrets management Â· least privilege Â· monitoring",
+                "IT Risk": "IAM - workload identity - secrets management - least privilege - monitoring",
             },
             "remediation": "Prefer managed identity where technically feasible; otherwise strengthen credential lifecycle, restrict Key Vault access, confirm least privilege, document ownership and monitor workload sign-ins.",
         },
 
-        "CLD-002 Â· Public cloud storage exposure": {
+        "CLD-002 - Public cloud storage exposure": {
             "domain": "Cloud / Data protection",
             "difficulty": "Foundation",
             "learning_goal": "Learn the difference between public network reachability and anonymous/public data access.",
@@ -1871,7 +1871,7 @@ elif menu == "IT Risk / GRC Practice Lab":
                 ("Anonymous access", "Whether someone can access data without authenticating."),
                 ("Default network action", "What happens to network traffic that does not match a specific network rule."),
                 ("Private endpoint", "A private network path to a cloud service that avoids public-network exposure."),
-                ("RBAC", "Role-Based Access Control â€” permissions are granted through defined roles."),
+                ("RBAC", "Role-Based Access Control - permissions are granted through defined roles."),
                 ("Encryption at rest", "Stored data is encrypted on disk/storage."),
                 ("Secure transfer", "Connections are required to use encrypted transport such as HTTPS/TLS."),
             ],
@@ -1969,12 +1969,12 @@ elif menu == "IT Risk / GRC Practice Lab":
                 "DORA": "Protection and prevention controls for ICT assets/data, secure configuration, logging and monitoring.",
                 "NIS2": "Access control, cryptography, asset management and secure systems operation.",
                 "ISO 27001": "Cloud services, access control, cryptography, logging, network security and data protection.",
-                "IT Risk": "Cloud configuration Â· data protection Â· network exposure Â· RBAC Â· logging",
+                "IT Risk": "Cloud configuration - data protection - network exposure - RBAC - logging",
             },
             "remediation": "Restrict network exposure where feasible, revalidate access groups, strengthen monitoring, and align log retention and data-protection controls with policy.",
         },
 
-        "TPRM-003 Â· Critical SaaS incident notified late": {
+        "TPRM-003 - Critical SaaS incident notified late": {
             "domain": "TPRM / DORA / Incident",
             "difficulty": "Guided",
             "learning_goal": "Connect vendor criticality, contractual requirements, resilience and regulatory incident management.",
@@ -1984,8 +1984,8 @@ elif menu == "IT Risk / GRC Practice Lab":
             ),
             "glossary": [
                 ("Critical vendor", "A provider whose failure can materially disrupt an important business service."),
-                ("RTO", "Recovery Time Objective â€” target maximum time to restore a service."),
-                ("RCA", "Root Cause Analysis â€” explanation of why the incident happened."),
+                ("RTO", "Recovery Time Objective - target maximum time to restore a service."),
+                ("RCA", "Root Cause Analysis - explanation of why the incident happened."),
                 ("Fourth party", "A supplier/subcontractor used by your direct vendor."),
                 ("Right to audit", "Contractual ability to obtain assurance or inspect relevant controls."),
             ],
@@ -2052,12 +2052,12 @@ elif menu == "IT Risk / GRC Practice Lab":
                 "DORA": "ICT incident management/reporting and ICT third-party risk management.",
                 "NIS2": "Incident handling, continuity and supply-chain security may be relevant depending on entity scope.",
                 "ISO 27001": "Supplier relationships, incident management and ICT readiness for business continuity.",
-                "IT Risk": "Third-party incident Â· resilience Â· RTO Â· contract Â· escalation",
+                "IT Risk": "Third-party incident - resilience - RTO - contract - escalation",
             },
             "remediation": "Open formal vendor remediation, require RCA and corrective actions, reassess resilience and notification controls, and complete internal regulatory classification.",
         },
 
-        "CHG-004 Â· Developer self-approves production change": {
+        "CHG-004 - Developer self-approves production change": {
             "domain": "Application / Change management",
             "difficulty": "Foundation",
             "learning_goal": "Understand how a software change travels from developer to production and why independent approval matters.",
@@ -2117,12 +2117,12 @@ elif menu == "IT Risk / GRC Practice Lab":
                 "DORA": "Controlled ICT change management.",
                 "NIS2": "Secure development/maintenance and governance measures.",
                 "ISO 27001": "Change management, segregation of duties, secure development and access rights.",
-                "IT Risk": "SDLC Â· CI/CD Â· change approval Â· SoD",
+                "IT Risk": "SDLC - CI/CD - change approval - SoD",
             },
             "remediation": "Enforce independent approval/deployment gates, document valid exceptions and review recent production changes for similar bypasses.",
         },
 
-        "IR-005 Â· Ransomware alert with incomplete containment evidence": {
+        "IR-005 - Ransomware alert with incomplete containment evidence": {
             "domain": "Incident / Security operations",
             "difficulty": "Guided",
             "learning_goal": "Understand why isolating one infected endpoint may not be enough to conclude that an incident is contained.",
@@ -2131,7 +2131,7 @@ elif menu == "IT Risk / GRC Practice Lab":
                 "Before accepting 'contained', you need evidence that the attacker did not move laterally and that recovery is trustworthy."
             ),
             "glossary": [
-                ("EDR", "Endpoint Detection and Response â€” security tooling monitoring laptops/servers."),
+                ("EDR", "Endpoint Detection and Response - security tooling monitoring laptops/servers."),
                 ("Credential dumping", "Attempt to extract stored credentials/tokens from a system."),
                 ("Host isolation", "Disconnecting an endpoint from normal network communication."),
                 ("Lateral movement", "Attacker moving from one compromised system/account to others."),
@@ -2188,12 +2188,12 @@ elif menu == "IT Risk / GRC Practice Lab":
                 "DORA": "ICT incident management, response, recovery, evidence and classification/reporting.",
                 "NIS2": "Incident handling, continuity, access control and reporting.",
                 "ISO 27001": "Incident management, logging, malware protection, backup and access management.",
-                "IT Risk": "EDR Â· containment Â· credential compromise Â· lateral movement Â· recovery",
+                "IT Risk": "EDR - containment - credential compromise - lateral movement - recovery",
             },
             "remediation": "Keep containment under review until identity compromise, lateral movement, data impact and recovery evidence are validated.",
         },
 
-        "ISO-006 Â· Access review control cannot prove completion": {
+        "ISO-006 - Access review control cannot prove completion": {
             "domain": "ISO 27001 / Control assurance",
             "difficulty": "Foundation",
             "learning_goal": "Learn the difference between 'the team says it did the control' and evidence that proves the control operated effectively.",
@@ -2253,7 +2253,7 @@ elif menu == "IT Risk / GRC Practice Lab":
                 "DORA": "ICT control assurance, access management and governance.",
                 "NIS2": "Access-control and governance measures.",
                 "ISO 27001": "Access rights, identity management and documented evidence supporting control operation.",
-                "IT Risk": "Control design vs operating effectiveness Â· access recertification Â· audit evidence",
+                "IT Risk": "Control design vs operating effectiveness - access recertification - audit evidence",
             },
             "remediation": "Use a workflow retaining the population, reviewer, per-user decision, timestamp, required action and closure evidence.",
         },
@@ -2267,7 +2267,7 @@ elif menu == "IT Risk / GRC Practice Lab":
         st.stop()
 
     case = practice_cases[selected_case]
-    case_id = selected_case.split(" Â· ")[0]
+    case_id = selected_case.split(" - ")[0]
 
     meta1, meta2, meta3 = st.columns([1.25, .8, .8])
     meta1.metric("Domain", case["domain"])
@@ -2277,8 +2277,8 @@ elif menu == "IT Risk / GRC Practice Lab":
     st.markdown(
         f"""
         <div class="console-card">
-            <div class="console-kicker">Case File Â· {case_id}</div>
-            <div class="console-title">{selected_case.split(' Â· ',1)[1]}</div>
+            <div class="console-kicker">Case File - {case_id}</div>
+            <div class="console-title">{selected_case.split(' - ',1)[1]}</div>
             <div class="console-copy">{case['context']}</div>
         </div>
         """,
@@ -2286,12 +2286,12 @@ elif menu == "IT Risk / GRC Practice Lab":
     )
 
     tabs = st.tabs([
-        "0 Â· Learn the Environment",
-        "1 Â· Evidence",
-        "2 Â· Guided Investigation",
-        "3 Â· Your Assessment",
-        "4 Â· Framework Lens",
-        "5 Â· Debrief",
+        "0 - Learn the Environment",
+        "1 - Evidence",
+        "2 - Guided Investigation",
+        "3 - Your Assessment",
+        "4 - Framework Lens",
+        "5 - Debrief",
     ])
 
     with tabs[0]:
@@ -2307,7 +2307,7 @@ elif menu == "IT Risk / GRC Practice Lab":
 
         st.success(
             "Do not move to the assessment until the scenario above makes sense. "
-            "The goal is to understand the technology first â€” not to guess a risk rating."
+            "The goal is to understand the technology first - not to guess a risk rating."
         )
 
     with tabs[1]:
@@ -2321,7 +2321,7 @@ elif menu == "IT Risk / GRC Practice Lab":
             st.markdown(f"#### {title}")
             st.dataframe(df, use_container_width=True, hide_index=True)
 
-            with st.expander(f"How to read this evidence â€” {title}"):
+            with st.expander(f"How to read this evidence - {title}"):
                 help_rows = case.get("screen_help", {}).get(title, [])
                 if help_rows:
                     help_df = pd.DataFrame(help_rows, columns=["Field / concept", "What it means"])
@@ -2337,7 +2337,7 @@ elif menu == "IT Risk / GRC Practice Lab":
 
     with tabs[2]:
         st.markdown("### Guided investigation")
-        st.caption("Try each question before revealing the answer. This is the learning phase â€” using hints is expected.")
+        st.caption("Try each question before revealing the answer. This is the learning phase - using hints is expected.")
 
         for idx, step in enumerate(case["guided_steps"], start=1):
             st.markdown(f"**{step['question']}**")
@@ -2365,7 +2365,7 @@ elif menu == "IT Risk / GRC Practice Lab":
     with tabs[3]:
         st.markdown("### Your independent assessment")
         st.caption(
-            "Now act as the IT Risk reviewer. You do not need perfect technical language â€” write what you understand and what you would challenge."
+            "Now act as the IT Risk reviewer. You do not need perfect technical language - write what you understand and what you would challenge."
         )
 
         observed = st.text_area(
@@ -2403,7 +2403,7 @@ elif menu == "IT Risk / GRC Practice Lab":
 
     with tabs[4]:
         st.markdown("### Regulatory / control-framework lens")
-        st.caption("Frameworks come after the technical reasoning â€” they should support the risk view, not replace it.")
+        st.caption("Frameworks come after the technical reasoning - they should support the risk view, not replace it.")
 
         if not st.session_state.get(state_key, False):
             st.warning("Submit your assessment first to unlock the framework mapping.")
@@ -2427,7 +2427,7 @@ elif menu == "IT Risk / GRC Practice Lab":
             if your_sev == case["severity"]:
                 st.success(f"Severity alignment: {case['severity']}")
             else:
-                st.warning(f"Your preliminary severity: {your_sev} Â· Model view: {case['severity']}")
+                st.warning(f"Your preliminary severity: {your_sev} - Model view: {case['severity']}")
 
             st.markdown("### Key issues")
             for item in case["issues"]:
@@ -2442,11 +2442,11 @@ elif menu == "IT Risk / GRC Practice Lab":
 
             st.markdown("### Your submitted notes")
             st.write("**Observed risks / gaps**")
-            st.write(st.session_state.get(f"saved_obs_{case_id}", "â€”") or "â€”")
+            st.write(st.session_state.get(f"saved_obs_{case_id}", "-") or "-")
             st.write("**Questions / evidence requested**")
-            st.write(st.session_state.get(f"saved_q_{case_id}", "â€”") or "â€”")
+            st.write(st.session_state.get(f"saved_q_{case_id}", "-") or "-")
             st.write("**Your remediation**")
-            st.write(st.session_state.get(f"saved_treat_{case_id}", "â€”") or "â€”")
+            st.write(st.session_state.get(f"saved_treat_{case_id}", "-") or "-")
 
             st.caption(
                 "Training note: framework mappings are intentionally high-level. Exact articles/controls should be validated against the organisation's approved framework and current regulatory interpretation."
