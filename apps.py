@@ -1784,6 +1784,54 @@ elif menu == "IT Risk / GRC Practice Lab":
                 "The application owner says MFA is not applicable because the identity is non-human."
             ),
             "mission": "Work out whether 'no MFA' is actually the problem, and identify what really matters for this application identity.",
+
+            "shadowing": [
+                {
+                    "step": "1. Identify what kind of identity this is",
+                    "senior": (
+                        "I start with the Identity record. Type says Service principal, so this is not a human user account. "
+                        "That immediately changes how I think about MFA. I would not raise a finding just because MFA is absent."
+                    ),
+                    "why": "The first job is to understand what object you are reviewing before applying a control designed for a different object.",
+                    "next": "Now I need to understand how this application proves its identity."
+                },
+                {
+                    "step": "2. Check the authentication method",
+                    "senior": (
+                        "Credential inventory says Client secret. That means the application authenticates with a stored secret. "
+                        "Now the control question becomes credential protection and lifecycle, not human MFA."
+                    ),
+                    "why": "Static credentials can be copied or exposed, so storage, rotation, ownership and monitoring matter.",
+                    "next": "I check where the secret is stored and how long it has existed."
+                },
+                {
+                    "step": "3. Inspect credential lifecycle",
+                    "senior": (
+                        "The secret is stored in Key Vault, which is good context, but I also see Last rotated: Never. "
+                        "That gets my attention. I still do not call it a finding yet because I need the applicable policy and technical constraints."
+                    ),
+                    "why": "A control concern becomes a finding only when you know the expected control and have evidence that it is not met.",
+                    "next": "I ask for the credential rotation standard and whether Managed Identity or certificate authentication is feasible."
+                },
+                {
+                    "step": "4. Review who can access the credential",
+                    "senior": (
+                        "The application can Get the secret, but the Payments-App-Admins group can Get, List and Set, with 12 members. "
+                        "I want to know who those 12 people are and whether all of them need that level of access."
+                    ),
+                    "why": "Protecting a secret is not only about where it is stored. It is also about who can retrieve or change it.",
+                    "next": "Request group membership, access-review evidence and privileged activity logs."
+                },
+                {
+                    "step": "5. Form a preliminary risk view",
+                    "senior": (
+                        "My preliminary view is not 'MFA missing'. It is: a production workload depends on a long-lived static secret that has never been rotated, "
+                        "and I need to validate least privilege, monitoring and whether a stronger authentication design is feasible."
+                    ),
+                    "why": "This turns raw technical facts into a risk statement without overclaiming.",
+                    "next": "Only after policy/evidence review would I decide whether this is a formal finding and its severity."
+                },
+            ],
             "guided_steps": [
                 {
                     "question": "1. Is this account used by a human being?",
@@ -1903,6 +1951,53 @@ elif menu == "IT Risk / GRC Practice Lab":
                 "A scan reports that public-network access is enabled. The cloud team says there is no issue because anonymous access is disabled."
             ),
             "mission": "Understand what is exposed, what is not, and which controls you need to inspect before deciding whether the risk is acceptable.",
+
+            "shadowing": [
+                {
+                    "step": "1. Separate network exposure from anonymous data access",
+                    "senior": (
+                        "I see Public network access: Enabled, but Anonymous blob access: Disabled. "
+                        "So I do not say 'the data is public'. I say the service is reachable over the public network but still requires authentication."
+                    ),
+                    "why": "Public reachability and public/anonymous data access are different control questions.",
+                    "next": "Now I check whether the network exposure is necessary and how access is controlled."
+                },
+                {
+                    "step": "2. Check data sensitivity",
+                    "senior": (
+                        "The dataset is Confidential / Client PII. That increases the impact if access control or network restrictions fail."
+                    ),
+                    "why": "Risk depends on both likelihood/exposure and impact. Sensitive data raises the impact side.",
+                    "next": "I inspect RBAC and who can read or modify the storage."
+                },
+                {
+                    "step": "3. Review access assignments",
+                    "senior": (
+                        "I see an application identity with Contributor and a Data-Analytics-Team group with Reader access. "
+                        "The table does not tell me whether every member still needs access, so I need membership and recertification evidence."
+                    ),
+                    "why": "A role name alone does not prove least privilege.",
+                    "next": "Request group membership, business justification and the latest access review."
+                },
+                {
+                    "step": "4. Review logging and monitoring",
+                    "senior": (
+                        "Read and write/delete operations are logged, which is positive. But Unusual external source alert is disabled. "
+                        "So logging exists, but detection may be weak."
+                    ),
+                    "why": "Logging records activity; monitoring/alerting helps detect suspicious activity in time.",
+                    "next": "Ask what detections exist for unusual source IPs, geographies, bulk reads or abnormal access."
+                },
+                {
+                    "step": "5. Form a preliminary risk view",
+                    "senior": (
+                        "I would not say 'customer data is exposed to the internet'. I would say a public-network reachable storage account holds confidential PII, "
+                        "so I need to validate network necessity, least privilege and detective controls before concluding whether the configuration is acceptable."
+                    ),
+                    "why": "Precise wording prevents overstating the evidence.",
+                    "next": "Compare the current design with cloud security standards and approved architecture."
+                },
+            ],
             "guided_steps": [
                 {
                     "question": "1. Can an anonymous internet user simply download the customer files?",
@@ -2011,6 +2106,51 @@ elif menu == "IT Risk / GRC Practice Lab":
                 "Service was unavailable for 4 hours. The vendor notified the bank 36 hours after initial detection."
             ),
             "mission": "Compare actual events with contractual expectations and identify what the bank must still determine internally.",
+
+            "shadowing": [
+                {
+                    "step": "1. Reconstruct the timeline",
+                    "senior": (
+                        "I start with facts and timestamps. Detection was on 21 Aug at 01:20, service restored at 06:03, and the bank was notified on 22 Aug at 13:30."
+                    ),
+                    "why": "Incident review starts with a reliable chronology.",
+                    "next": "Compare those facts with contractual requirements."
+                },
+                {
+                    "step": "2. Test the contract",
+                    "senior": (
+                        "The contract target says notification within 4 hours after confirmation and RTO is 2 hours. "
+                        "The vendor missed both targets based on the evidence provided."
+                    ),
+                    "why": "TPRM converts incident facts into supplier-control and contractual questions.",
+                    "next": "Now determine what we still do not know about the incident itself."
+                },
+                {
+                    "step": "3. Think like incident management",
+                    "senior": (
+                        "I still need root cause, affected systems/data, confidentiality/integrity impact, containment, recovery assurance and whether a fourth party was involved."
+                    ),
+                    "why": "Availability duration alone is not enough to understand the full incident impact.",
+                    "next": "Request RCA, impact assessment, containment evidence and corrective actions."
+                },
+                {
+                    "step": "4. Separate vendor obligations from bank obligations",
+                    "senior": (
+                        "The vendor notifying us does not complete the bank's regulatory work. The bank must perform its own DORA classification and reporting assessment."
+                    ),
+                    "why": "A regulated entity cannot outsource its own regulatory responsibility to a supplier.",
+                    "next": "Confirm whether internal incident governance and DORA classification were triggered."
+                },
+                {
+                    "step": "5. Form a preliminary risk view",
+                    "senior": (
+                        "We have a critical supplier that breached notification and recovery expectations during a security/availability incident, "
+                        "with important facts still missing. I would escalate and open formal remediation."
+                    ),
+                    "why": "Criticality, contractual breach and incomplete incident information together drive urgency.",
+                    "next": "Track RCA, corrective actions, resilience improvements and internal regulatory actions."
+                },
+            ],
             "guided_steps": [
                 {"question": "1. Did the vendor meet the 4-hour notification target?", "hint": "Compare detection and bank notification.", "answer": "No. Notification occurred roughly 36 hours after detection."},
                 {"question": "2. Did the vendor meet the 2-hour RTO?", "hint": "Compare outage start and restoration.", "answer": "No. The outage lasted about four hours."},
@@ -2083,6 +2223,52 @@ elif menu == "IT Risk / GRC Practice Lab":
                 "The team says the change was low risk because automated tests passed."
             ),
             "mission": "Decide whether passing automated tests compensates for the lack of independent approval.",
+
+            "shadowing": [
+                {
+                    "step": "1. Understand the change flow",
+                    "senior": (
+                        "A normal production change usually moves through request, code change, review/approval, testing and deployment. "
+                        "Different tools may implement this flow, but the control intent is authorization, testing and separation of incompatible duties."
+                    ),
+                    "why": "Before reviewing evidence, you need the mental model of how code reaches production.",
+                    "next": "Map each evidence item to one stage of that flow."
+                },
+                {
+                    "step": "2. Trace who did what",
+                    "senior": (
+                        "The change ticket requester is dev.jmiller. The PR author is dev.jmiller. The PR approver is also dev.jmiller. "
+                        "Production deployment was triggered by dev.jmiller."
+                    ),
+                    "why": "Control testing often starts by tracing identities across separate systems.",
+                    "next": "Ask whether one person is allowed to control all of these steps."
+                },
+                {
+                    "step": "3. Separate testing from approval",
+                    "senior": (
+                        "Automated tests and the security scan passed. That is useful evidence about technical checks, but it does not prove independent authorization."
+                    ),
+                    "why": "Different controls address different risks. Testing does not automatically compensate for missing segregation of duties.",
+                    "next": "Check change policy and approved exception/standard-change rules."
+                },
+                {
+                    "step": "4. Avoid premature findings",
+                    "senior": (
+                        "I suspect a segregation-of-duties issue, but before finalizing a finding I verify whether low-risk changes are allowed to use a documented exception or automated approval model."
+                    ),
+                    "why": "You test the actual control requirement, not your assumption of what the control should be.",
+                    "next": "Request policy, pipeline configuration and any exception approval."
+                },
+                {
+                    "step": "5. Form a preliminary risk view",
+                    "senior": (
+                        "The evidence shows one developer controlled request, approval and deployment. Unless policy explicitly allows this with a valid compensating control, "
+                        "the change process may not provide independent authorization."
+                    ),
+                    "why": "That is a defensible risk statement tied to evidence and a control expectation.",
+                    "next": "Assess frequency, scope and whether the pipeline can technically prevent self-approval."
+                },
+            ],
             "guided_steps": [
                 {"question": "1. Who requested, approved and deployed the change?", "hint": "Compare the three evidence sets.", "answer": "The same developer, dev.jmiller."},
                 {"question": "2. What control principle is weakened?", "hint": "Think incompatible responsibilities.", "answer": "Segregation of duties / independent authorization."},
@@ -2148,6 +2334,49 @@ elif menu == "IT Risk / GRC Practice Lab":
                 "The ticket says 'contained', but evidence of credential reset, lateral-movement review and backup validation is missing."
             ),
             "mission": "Challenge whether 'contained' is sufficiently evidenced.",
+
+            "shadowing": [
+                {
+                    "step": "1. Read the detection timeline",
+                    "senior": (
+                        "The EDR detected suspicious encryption and then credential-dumping behaviour. The host was isolated 18 minutes after the first alert."
+                    ),
+                    "why": "The sequence tells me this may be more than malware on one laptop; credentials may also be compromised.",
+                    "next": "Check whether the incident team investigated impact beyond the endpoint."
+                },
+                {
+                    "step": "2. Challenge the word 'contained'",
+                    "senior": (
+                        "The ticket says Contained, but that is a conclusion. I need evidence supporting it. Host isolation is one containment action, not proof that the whole incident is contained."
+                    ),
+                    "why": "IT Risk should distinguish a status label from the evidence behind that status.",
+                    "next": "Look for credential reset/revocation and lateral-movement investigation."
+                },
+                {
+                    "step": "3. Follow the credential risk",
+                    "senior": (
+                        "Credential dumping means the attacker may have obtained credentials or tokens. Even after isolating the laptop, those credentials could potentially be used elsewhere."
+                    ),
+                    "why": "This is why identity evidence becomes part of an endpoint incident.",
+                    "next": "Request identity logs, password/token revocation evidence and lateral-movement queries."
+                },
+                {
+                    "step": "4. Check recovery assurance",
+                    "senior": (
+                        "Backup restore validation is also missing. Recovery is not only 'we have backups'; the organisation needs confidence that clean restoration actually works."
+                    ),
+                    "why": "Ransomware can affect recovery capability as well as production systems.",
+                    "next": "Request backup integrity and restore-test evidence."
+                },
+                {
+                    "step": "5. Form a preliminary risk view",
+                    "senior": (
+                        "I would keep this incident under active review. Endpoint isolation occurred, but identity compromise, lateral movement, data impact and recovery assurance are not yet evidenced."
+                    ),
+                    "why": "The risk conclusion follows from what is still unknown, not only what was already done.",
+                    "next": "Close the evidence gaps before accepting the incident as fully contained/recovered."
+                },
+            ],
             "guided_steps": [
                 {"question": "1. What did the EDR detect besides encryption behaviour?", "hint": "Look at 09:08.", "answer": "Credential-dumping behaviour."},
                 {"question": "2. Why does that matter after the laptop is isolated?", "hint": "Credentials can exist outside the laptop.", "answer": "Compromised credentials could be used to access other systems."},
@@ -2210,13 +2439,66 @@ elif menu == "IT Risk / GRC Practice Lab":
             ],
             "screen_help": {
                 "Q2 user export": [("User", "Identity in scope."), ("Role", "Level/type of access."), ("Status", "Whether the account is active.")],
-                "Review artefacts": [("Population export", "Shows what should have been reviewed."), ("Reviewer decisions", "Shows keep/remove/change decisions."), ("Removals / changes", "Evidence that required actions happened."), ("Reviewer sign-off", "Evidence of accountable completion.")],
+                "Detailed review sheet": [
+                    ("Reviewer", "Who made the access decision."),
+                    ("Decision", "Whether access should be retained, removed or changed."),
+                    ("Review date", "When the decision was made."),
+                    ("Action ticket", "Evidence used to track a required access change/removal."),
+                    ("Current status", "Current account state after the review."),
+                ],
+                "Review artefacts": [("Population export", "Shows what should have been reviewed."), ("Detailed reviewer decisions", "Shows keep/remove/change decisions."), ("Removal / change execution evidence", "Evidence that required actions happened."), ("Reviewer sign-off", "Evidence of accountable completion.")],
             },
             "context": (
                 "An application owner says quarterly access reviews are always completed. For Q2, the team has an exported user list and an email saying 'review complete', "
                 "but no evidence of reviewer decisions, removals or a proper sign-off trail."
             ),
             "mission": "Determine whether the retained evidence is enough to conclude that the control operated effectively.",
+
+            "shadowing": [
+                {
+                    "step": "1. Understand the control objective",
+                    "senior": (
+                        "The control says access should be periodically reviewed so users keep only the access they still need. "
+                        "To test it, I need evidence of the population, the reviewer decision and any resulting action."
+                    ),
+                    "why": "Control testing starts with what the control is supposed to achieve.",
+                    "next": "Check whether the evidence proves each part of that process."
+                },
+                {
+                    "step": "2. Inspect the population",
+                    "senior": (
+                        "The Q2 export shows three active users and their roles. This tells me who was in scope, but it does not tell me whether anyone actually reviewed them."
+                    ),
+                    "why": "A population is evidence of scope, not evidence of execution.",
+                    "next": "Look for reviewer decisions and timestamps."
+                },
+                {
+                    "step": "3. Inspect reviewer decisions",
+                    "senior": (
+                        "The detailed review sheet shows one retained user, one admin with no decision, and one user marked Remove. "
+                        "That already suggests the review was not fully completed."
+                    ),
+                    "why": "Per-user decisions are the core evidence that the control operated.",
+                    "next": "For the Remove decision, verify whether the access was actually removed."
+                },
+                {
+                    "step": "4. Close the action trail",
+                    "senior": (
+                        "The user marked Remove has no action ticket and is still Active in the population. "
+                        "So even if the reviewer made a decision, I cannot prove the remediation was executed."
+                    ),
+                    "why": "A review control often includes both decision and follow-through.",
+                    "next": "Request ticket/system evidence showing removal, plus proper reviewer sign-off."
+                },
+                {
+                    "step": "5. Form a preliminary risk view",
+                    "senior": (
+                        "I cannot conclude operating effectiveness for Q2. The population exists, but one privileged user has no review decision and a removal decision lacks closure evidence."
+                    ),
+                    "why": "This conclusion is specific to what the retained evidence can and cannot prove.",
+                    "next": "Raise an evidence/control-performance issue and require a complete auditable review trail."
+                },
+            ],
             "guided_steps": [
                 {"question": "1. What does the user export prove?", "hint": "It is a population, not a decision log.", "answer": "It proves which accounts/roles were listed, but not that each access was reviewed."},
                 {"question": "2. What evidence would show that actual decisions were made?", "hint": "Think approve/remove/change.", "answer": "Per-user reviewer decisions with timestamps/reviewer identity."},
@@ -2229,10 +2511,15 @@ elif menu == "IT Risk / GRC Practice Lab":
                     {"User": "b.meyer", "Role": "Admin", "Status": "Active"},
                     {"User": "c.rossi", "Role": "Editor", "Status": "Active"},
                 ]),
+                "Detailed review sheet": pd.DataFrame([
+                    {"User": "a.silva", "Role": "Viewer", "Reviewer": "j.smith", "Decision": "Retain", "Review date": "2026-07-03", "Action ticket": "-", "Current status": "Active"},
+                    {"User": "b.meyer", "Role": "Admin", "Reviewer": "", "Decision": "", "Review date": "", "Action ticket": "", "Current status": "Active"},
+                    {"User": "c.rossi", "Role": "Editor", "Reviewer": "j.smith", "Decision": "Remove", "Review date": "2026-07-03", "Action ticket": "Missing", "Current status": "Active"},
+                ]),
                 "Review artefacts": pd.DataFrame([
                     {"Artefact": "Population export", "Available": "Yes"},
-                    {"Artefact": "Reviewer decisions", "Available": "No"},
-                    {"Artefact": "Removals / changes", "Available": "No"},
+                    {"Artefact": "Detailed reviewer decisions", "Available": "Partial"},
+                    {"Artefact": "Removal / change execution evidence", "Available": "No"},
                     {"Artefact": "Reviewer sign-off", "Available": "Email only"},
                 ]),
             },
@@ -2286,16 +2573,17 @@ elif menu == "IT Risk / GRC Practice Lab":
     )
 
     tabs = st.tabs([
-        "0 - Learn the Environment",
-        "1 - Evidence",
-        "2 - Guided Investigation",
-        "3 - Your Assessment",
-        "4 - Framework Lens",
-        "5 - Debrief",
+        "0 - Learn",
+        "1 - Shadowing",
+        "2 - Evidence",
+        "3 - Guided",
+        "4 - Independent",
+        "5 - Framework Lens",
+        "6 - Debrief",
     ])
 
     with tabs[0]:
-        st.markdown("### What are you learning here?")
+        st.markdown("### Onboarding: what are you learning here?")
         st.info(case["learning_goal"])
 
         st.markdown("### The scenario in plain language")
@@ -2311,6 +2599,25 @@ elif menu == "IT Risk / GRC Practice Lab":
         )
 
     with tabs[1]:
+        st.markdown("### Shadowing mode")
+        st.caption(
+            "Imagine you are sitting next to a senior IT Risk analyst. Follow the order of attention, not just the final answer."
+        )
+
+        for idx, item in enumerate(case["shadowing"], start=1):
+            st.markdown(f"#### {item['step']}")
+            st.write(item["senior"])
+            st.markdown(f"**Why this matters:** {item['why']}")
+            st.markdown(f"**What I would do next:** {item['next']}")
+            if idx < len(case["shadowing"]):
+                st.divider()
+
+        st.info(
+            "Shadowing rule: do not try to memorise the wording. Notice the sequence: understand the object, inspect the evidence, "
+            "separate facts from assumptions, request missing evidence, then form a risk view."
+        )
+
+    with tabs[2]:
         st.markdown("### Evidence supplied by the IT / Security team")
         st.caption(
             "Each table below represents the kind of information you might receive from a real technical team. "
@@ -2335,7 +2642,7 @@ elif menu == "IT Risk / GRC Practice Lab":
     if guide_state_key not in st.session_state:
         st.session_state[guide_state_key] = {}
 
-    with tabs[2]:
+    with tabs[3]:
         st.markdown("### Guided investigation")
         st.caption("Try each question before revealing the answer. This is the learning phase - using hints is expected.")
 
@@ -2362,7 +2669,7 @@ elif menu == "IT Risk / GRC Practice Lab":
 
     state_key = "practice_submitted_" + case_id.replace("-", "_")
 
-    with tabs[3]:
+    with tabs[4]:
         st.markdown("### Your independent assessment")
         st.caption(
             "Now act as the IT Risk reviewer. You do not need perfect technical language - write what you understand and what you would challenge."
@@ -2401,7 +2708,7 @@ elif menu == "IT Risk / GRC Practice Lab":
             st.session_state[f"saved_sev_{case_id}"] = severity_answer
             st.success("Investigation submitted. Framework Lens and Debrief are now unlocked.")
 
-    with tabs[4]:
+    with tabs[5]:
         st.markdown("### Regulatory / control-framework lens")
         st.caption("Frameworks come after the technical reasoning - they should support the risk view, not replace it.")
 
@@ -2419,7 +2726,7 @@ elif menu == "IT Risk / GRC Practice Lab":
                     unsafe_allow_html=True,
                 )
 
-    with tabs[5]:
+    with tabs[6]:
         if not st.session_state.get(state_key, False):
             st.warning("Complete and submit 'Your Assessment' before revealing the debrief.")
         else:
