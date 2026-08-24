@@ -1,3 +1,6 @@
+
+
+
 import base64
 import io
 import sqlite3
@@ -33,7 +36,7 @@ REQUIRED_SHEETS = {
 # ============================================================
 
 st.set_page_config(
-    page_title="TPRM Risk Lab",
+    page_title="IT Risk / GRC Lab",
     page_icon="◆",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -864,9 +867,9 @@ st.sidebar.markdown(
     <div class="brand">
         <div>
             <span class="brand-mark">◆</span>
-            <span class="brand-title">TPRM RISK LAB</span>
+            <span class="brand-title">IT RISK / GRC LAB</span>
         </div>
-        <div class="brand-subtitle">Third-Party Risk Intelligence</div>
+        <div class="brand-subtitle">Technology Risk · Cyber GRC · TPRM</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -883,6 +886,7 @@ menu = st.sidebar.radio(
         "Document Compliance",
         "Sample Document Library",
         "Assessment Simulation",
+        "IT Risk / GRC Practice Lab",
         "Data Import",
     ],
 )
@@ -1697,6 +1701,420 @@ elif menu == "Assessment Simulation":
             "In a real organization, scoring should be aligned with approved "
             "risk appetite, control frameworks and governance."
         )
+
+
+# ============================================================
+# IT RISK / GRC PRACTICE LAB
+# ============================================================
+
+elif menu == "IT Risk / GRC Practice Lab":
+
+    page_header(
+        "Hands-on Practice",
+        "IT Risk / GRC Practice Lab",
+        "Investigate realistic technology-risk cases using evidence, ask the right questions, and map findings to DORA, NIS2 and ISO 27001.",
+    )
+
+    practice_cases = {
+        "IAM-001 · Non-human identity with static secret": {
+            "domain": "IAM / Non-human identities",
+            "difficulty": "Foundation",
+            "context": (
+                "A payment-reconciliation application uses a service principal to access an internal API. "
+                "During a quarterly access review, the account is flagged because MFA is not configured. "
+                "The application owner says MFA is not applicable because the identity is non-human."
+            ),
+            "mission": "Decide whether the absence of MFA is the real issue and determine what evidence you need before concluding on risk.",
+            "evidence": {
+                "Identity record": pd.DataFrame([
+                    {"Object": "svc-pay-recon-prod", "Type": "Service principal", "Owner": "Payments Apps", "Created": "2024-02-11", "Last sign-in": "2026-08-23 03:14", "Privileged role": "No"},
+                ]),
+                "Credential inventory": pd.DataFrame([
+                    {"Credential": "Client secret", "Created": "2024-02-11", "Expires": "2027-02-11", "Last rotated": "Never", "Storage": "Azure Key Vault"},
+                ]),
+                "API permissions": pd.DataFrame([
+                    {"Permission": "Payments.Read.All", "Type": "Application", "Admin consent": "Granted"},
+                    {"Permission": "Reconciliation.Write", "Type": "Application", "Admin consent": "Granted"},
+                ]),
+                "Key Vault access": pd.DataFrame([
+                    {"Principal": "Payments-App-Admins", "Access": "Secrets: Get/List/Set", "Members": 12},
+                    {"Principal": "svc-pay-recon-prod", "Access": "Secrets: Get", "Members": "N/A"},
+                ]),
+                "Sign-in telemetry": pd.DataFrame([
+                    {"Time": "2026-08-23 03:14", "Source": "10.20.18.44", "Result": "Success", "Auth": "Client secret"},
+                    {"Time": "2026-08-22 03:13", "Source": "10.20.18.44", "Result": "Success", "Auth": "Client secret"},
+                    {"Time": "2026-08-21 03:14", "Source": "10.20.18.44", "Result": "Success", "Auth": "Client secret"},
+                ]),
+            },
+            "issues": [
+                "Long-lived static client secret has never been rotated.",
+                "Credential-management design should be challenged: managed identity or certificate-based authentication may reduce secret exposure.",
+                "Key Vault administrative access is broad and should be validated against least privilege.",
+                "MFA is not the primary control for this non-human identity; authentication, secret protection, rotation, ownership and logging are the relevant controls.",
+            ],
+            "questions": [
+                "Why is a client secret used instead of managed identity or certificate authentication?",
+                "Is there an approved credential-rotation standard and does this credential comply?",
+                "Who can retrieve or modify the secret in Key Vault?",
+                "Is usage restricted to expected workloads, network locations or applications?",
+                "Are anomalous service-principal sign-ins monitored and alerted?",
+                "What happens to ownership when application-team members leave or change roles?",
+            ],
+            "severity": "High",
+            "frameworks": {
+                "DORA": "ICT risk management — identity, access control, secure configuration, monitoring and protection of ICT assets.",
+                "NIS2": "Cybersecurity risk-management measures — access control, asset management, security in acquisition/development/maintenance and incident handling.",
+                "ISO 27001": "Annex A themes: identity management, authentication information, access rights, privileged access, logging and monitoring.",
+                "IT Risk": "IAM · non-human identity · secrets management · least privilege · logging",
+            },
+            "remediation": "Replace the static secret where feasible with managed identity/certificate authentication; otherwise define short-lived rotation, restrict Key Vault administration, document ownership, and monitor workload sign-ins.",
+        },
+        "CLD-002 · Public cloud storage exposure": {
+            "domain": "Cloud / Data protection",
+            "difficulty": "Intermediate",
+            "context": (
+                "A customer-analytics workload stores exported client files in cloud object storage. A security scan reports that public-network access is enabled. "
+                "The cloud team states that the container itself is not anonymous and therefore there is no exposure."
+            ),
+            "mission": "Assess whether the control posture is acceptable and identify the evidence needed to distinguish exposure from actual compromise.",
+            "evidence": {
+                "Storage configuration": pd.DataFrame([
+                    {"Setting": "Public network access", "Value": "Enabled"},
+                    {"Setting": "Anonymous blob access", "Value": "Disabled"},
+                    {"Setting": "Default network action", "Value": "Allow"},
+                    {"Setting": "Encryption at rest", "Value": "Enabled (platform-managed key)"},
+                    {"Setting": "Secure transfer required", "Value": "Enabled"},
+                ]),
+                "Data classification": pd.DataFrame([
+                    {"Dataset": "customer_export_daily.csv", "Classification": "Confidential / Client PII", "Retention": "90 days"},
+                ]),
+                "Access assignments": pd.DataFrame([
+                    {"Principal": "analytics-prod-mi", "Role": "Storage Blob Data Contributor", "Scope": "Container"},
+                    {"Principal": "Data-Analytics-Team", "Role": "Storage Blob Data Reader", "Scope": "Storage account"},
+                ]),
+                "Logging status": pd.DataFrame([
+                    {"Log": "Read operations", "Enabled": "Yes", "Retention": "30 days"},
+                    {"Log": "Write/Delete operations", "Enabled": "Yes", "Retention": "30 days"},
+                    {"Alert": "Unusual external source", "Enabled": "No"},
+                ]),
+            },
+            "issues": [
+                "Public network reachability increases attack surface even though anonymous access is disabled.",
+                "The broad reader group should be tested for least privilege and business need.",
+                "Thirty-day log retention may be insufficient for investigation or regulatory requirements depending on the control standard.",
+                "Absence of an alert for unusual external access weakens detective controls.",
+            ],
+            "questions": [
+                "Can the storage account be restricted to private endpoints or approved networks?",
+                "Who is in the Data-Analytics-Team group and when was access last recertified?",
+                "Are there successful reads from unexpected public IP addresses?",
+                "What logging-retention period is required by policy and investigation needs?",
+                "Is customer data tokenised, minimised or additionally encrypted before storage?",
+            ],
+            "severity": "High",
+            "frameworks": {
+                "DORA": "Protection and prevention controls for ICT assets and data, logging, monitoring and secure configuration.",
+                "NIS2": "Risk-management measures including access control, cryptography, asset management and secure systems operation.",
+                "ISO 27001": "Annex A themes: cloud services, access control, cryptography, logging, network security and data leakage prevention.",
+                "IT Risk": "Cloud configuration · data protection · network exposure · logging",
+            },
+            "remediation": "Move the workload to private connectivity or tightly approved networks, revalidate access groups, extend logging per policy, and add monitoring for anomalous access.",
+        },
+        "TPRM-003 · Critical SaaS incident notified late": {
+            "domain": "TPRM / DORA / Incident",
+            "difficulty": "Intermediate",
+            "context": (
+                "A critical SaaS provider supporting customer onboarding suffered an availability and security incident. "
+                "Service was unavailable for 4 hours. The vendor notified the bank 36 hours after initial detection."
+            ),
+            "mission": "Assess the third-party and regulatory implications, then decide what you would request from the provider and internal stakeholders.",
+            "evidence": {
+                "Vendor timeline": pd.DataFrame([
+                    {"Event": "Vendor detection", "Time": "2026-08-21 01:20"},
+                    {"Event": "Service unavailable", "Time": "2026-08-21 02:05"},
+                    {"Event": "Service restored", "Time": "2026-08-21 06:03"},
+                    {"Event": "Bank notified", "Time": "2026-08-22 13:30"},
+                ]),
+                "Contract clauses": pd.DataFrame([
+                    {"Clause": "Security incident notification", "Requirement": "Without undue delay; target <= 4 hours after confirmation"},
+                    {"Clause": "BCP/DR", "Requirement": "RTO 2 hours / annual test"},
+                    {"Clause": "Right to audit", "Requirement": "Included"},
+                ]),
+                "Service profile": pd.DataFrame([
+                    {"Criticality": "Critical", "Process": "Customer onboarding", "Data": "Client PII", "Substitutability": "Low"},
+                ]),
+            },
+            "issues": [
+                "Vendor notification materially exceeded the contractual target.",
+                "Four-hour outage exceeded the contracted two-hour RTO.",
+                "The bank must assess whether the incident meets its own DORA major-ICT-incident classification/reporting criteria; vendor notification timing does not replace the bank's obligations.",
+                "Root cause, affected data, containment, recovery evidence and fourth-party involvement remain unknown.",
+            ],
+            "questions": [
+                "What was the confirmed root cause and exact impact scope?",
+                "Was confidentiality or integrity affected, or only availability?",
+                "Why did vendor notification take 36 hours?",
+                "Were any subcontractors/fourth parties involved?",
+                "Was the contracted RTO breached and what corrective action follows?",
+                "Has the internal incident team assessed DORA classification and reporting timelines?",
+            ],
+            "severity": "Critical",
+            "frameworks": {
+                "DORA": "ICT incident management/reporting and ICT third-party risk management; contractual and resilience obligations are both relevant.",
+                "NIS2": "Incident handling, business continuity, supply-chain security and reporting may be relevant depending on entity scope.",
+                "ISO 27001": "Supplier relationships, incident management, ICT readiness for business continuity and monitoring of supplier services.",
+                "IT Risk": "Third-party incident · resilience · RTO · contractual control · escalation",
+            },
+            "remediation": "Open formal vendor remediation, require RCA and corrective-action plan, reassess resilience and notification controls, validate DORA classification/reporting, and consider contractual escalation/right-to-audit.",
+        },
+        "CHG-004 · Developer self-approves production change": {
+            "domain": "Application / Change management",
+            "difficulty": "Foundation",
+            "context": (
+                "A production change fixed a defect in a customer-facing application. The same developer created the change ticket, approved the pull request and triggered the production deployment. "
+                "The team says the change was low risk because automated tests passed."
+            ),
+            "mission": "Assess the change-control design and identify whether automated testing compensates for the approval conflict.",
+            "evidence": {
+                "Change ticket": pd.DataFrame([
+                    {"Ticket": "CHG-48219", "Requester": "dev.jmiller", "Risk": "Low", "Business approval": "None", "Rollback plan": "Documented", "Status": "Implemented"},
+                ]),
+                "Pull request": pd.DataFrame([
+                    {"PR": "#9182", "Author": "dev.jmiller", "Approver": "dev.jmiller", "Automated tests": "Passed", "Security scan": "Passed"},
+                ]),
+                "Deployment": pd.DataFrame([
+                    {"Environment": "Production", "Triggered by": "dev.jmiller", "Pipeline gate": "Manual", "Deployment": "Successful"},
+                ]),
+            },
+            "issues": [
+                "Segregation of duties is ineffective: the developer independently approved and deployed their own production change.",
+                "Automated testing is a valuable preventive/detective control but does not by itself provide independent authorization.",
+                "A low-risk classification should not automatically remove required SoD unless an approved risk-based exception exists.",
+            ],
+            "questions": [
+                "What does the change policy require for low-risk production changes?",
+                "Can the CI/CD platform technically prevent self-approval or self-deployment?",
+                "Was there an approved emergency or standard-change exception?",
+                "Who reviews production-change logs for control bypasses?",
+                "How many similar self-approved changes occurred in the period?",
+            ],
+            "severity": "High",
+            "frameworks": {
+                "DORA": "ICT change management and controlled implementation of ICT system changes.",
+                "NIS2": "Security in acquisition, development and maintenance of systems; access-control and governance measures.",
+                "ISO 27001": "Annex A themes: change management, segregation of duties, secure development lifecycle and access rights.",
+                "IT Risk": "SDLC · CI/CD · change approval · segregation of duties",
+            },
+            "remediation": "Enforce independent approval/deployment gates in the pipeline, document any risk-based exceptions, and review the population of recent production changes for similar control bypasses.",
+        },
+        "IR-005 · Ransomware alert with incomplete containment evidence": {
+            "domain": "Incident / Security operations",
+            "difficulty": "Advanced",
+            "context": (
+                "EDR detected ransomware-like behaviour on a finance workstation. The endpoint was isolated 18 minutes later. "
+                "The incident ticket states 'contained', but there is no attached evidence showing credential reset, lateral-movement review or validation of backups."
+            ),
+            "mission": "Challenge the containment conclusion and identify what evidence is needed before risk can be considered controlled.",
+            "evidence": {
+                "EDR timeline": pd.DataFrame([
+                    {"Time": "09:02", "Event": "Suspicious encryption activity", "Action": "Alert generated"},
+                    {"Time": "09:08", "Event": "Credential dumping behaviour", "Action": "Blocked"},
+                    {"Time": "09:20", "Event": "Host isolated", "Action": "Completed"},
+                ]),
+                "Incident ticket": pd.DataFrame([
+                    {"Priority": "P1", "Status": "Contained", "Affected asset": "FIN-WS-044", "User": "finance.ap", "Data impact": "Unknown"},
+                ]),
+                "Evidence checklist": pd.DataFrame([
+                    {"Evidence": "Credential reset", "Attached": "No"},
+                    {"Evidence": "Lateral movement query", "Attached": "No"},
+                    {"Evidence": "Backup restore validation", "Attached": "No"},
+                    {"Evidence": "EDR isolation confirmation", "Attached": "Yes"},
+                ]),
+            },
+            "issues": [
+                "Host isolation alone does not demonstrate complete containment after credential-dumping activity.",
+                "Potential lateral movement and credential compromise remain unassessed in the evidence provided.",
+                "Recovery readiness is not evidenced because backup/restoration validation is missing.",
+            ],
+            "questions": [
+                "Were potentially exposed credentials reset or revoked?",
+                "Was lateral movement investigated across identity, EDR, network and authentication logs?",
+                "Was the malware execution path/root cause established?",
+                "Were backups checked for integrity and restore capability?",
+                "Was sensitive data accessed or exfiltrated?",
+                "Does the incident meet internal or regulatory escalation/reporting thresholds?",
+            ],
+            "severity": "Critical",
+            "frameworks": {
+                "DORA": "ICT incident management, detection, response, recovery, evidence and classification/reporting.",
+                "NIS2": "Incident handling, business continuity, access control and reporting obligations.",
+                "ISO 27001": "Information-security incident management, logging, monitoring, malware protection, backup and access management.",
+                "IT Risk": "EDR · containment · credential compromise · lateral movement · recovery",
+            },
+            "remediation": "Reopen/hold the incident in containment until identity compromise, lateral movement, data impact and recovery evidence are validated; capture all evidence and complete regulatory classification.",
+        },
+        "ISO-006 · Access review control cannot prove completion": {
+            "domain": "ISO 27001 / Control assurance",
+            "difficulty": "Intermediate",
+            "context": (
+                "An application owner states that quarterly access reviews are always completed. For Q2, the team can provide an exported user list and an email saying 'review complete', but no evidence of reviewer decisions, removed access or sign-off trail."
+            ),
+            "mission": "Determine whether the control can be considered effectively operated and what evidence would support an audit conclusion.",
+            "evidence": {
+                "Q2 user export": pd.DataFrame([
+                    {"User": "a.silva", "Role": "Viewer", "Status": "Active"},
+                    {"User": "b.meyer", "Role": "Admin", "Status": "Active"},
+                    {"User": "c.rossi", "Role": "Editor", "Status": "Active"},
+                ]),
+                "Review artefacts": pd.DataFrame([
+                    {"Artefact": "Population export", "Available": "Yes"},
+                    {"Artefact": "Reviewer decisions", "Available": "No"},
+                    {"Artefact": "Removals / changes", "Available": "No"},
+                    {"Artefact": "Reviewer sign-off", "Available": "Email only"},
+                ]),
+            },
+            "issues": [
+                "Evidence demonstrates a population existed but not that access was actually reviewed against business need.",
+                "Operating effectiveness cannot be concluded without traceable reviewer decisions and follow-up actions.",
+                "The control may be performed but is not auditable/reproducible with the evidence retained.",
+            ],
+            "questions": [
+                "Who is the designated reviewer and are they independent/appropriate for the access being reviewed?",
+                "Where are approve/remove decisions recorded?",
+                "Can removed access be traced to fulfilment tickets or system logs?",
+                "Was the population complete at the review cut-off date?",
+                "How are overdue or non-responsive reviewers escalated?",
+            ],
+            "severity": "Medium",
+            "frameworks": {
+                "DORA": "ICT control assurance, access management, governance and evidence of effective controls.",
+                "NIS2": "Access-control and governance measures; evidence supports assurance over implementation.",
+                "ISO 27001": "Access rights, identity management, segregation/authorization and documented information supporting control operation.",
+                "IT Risk": "Control design vs operating effectiveness · access recertification · audit evidence",
+            },
+            "remediation": "Implement a review workflow that records population, reviewer, per-user decision, completion timestamp, removals and closure evidence; retain artefacts according to the control standard.",
+        },
+    }
+
+    case_names = list(practice_cases.keys())
+    selected_case = st.selectbox("Select practice case", case_names)
+    case = practice_cases[selected_case]
+
+    meta1, meta2, meta3 = st.columns([1.2, .8, .8])
+    meta1.metric("Domain", case["domain"])
+    meta2.metric("Difficulty", case["difficulty"])
+    meta3.metric("Evidence sets", len(case["evidence"]))
+
+    st.markdown(
+        f"""
+        <div class="console-card">
+            <div class="console-kicker">Case File · {selected_case.split(' · ')[0]}</div>
+            <div class="console-title">{selected_case.split(' · ',1)[1]}</div>
+            <div class="console-copy">{case['context']}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.info("Mission: " + case["mission"])
+
+    evidence_tab, workspace_tab, mapping_tab, debrief_tab = st.tabs(
+        ["1 · Evidence", "2 · Investigation Workspace", "3 · Framework Lens", "4 · Debrief"]
+    )
+
+    with evidence_tab:
+        st.caption("Treat these as artefacts supplied by IT/security teams. Review them before opening the debrief.")
+        for title, df in case["evidence"].items():
+            with st.expander(title, expanded=True):
+                st.dataframe(df, use_container_width=True, hide_index=True)
+
+    state_key = "practice_submitted_" + selected_case.split(" · ")[0].replace("-", "_")
+
+    with workspace_tab:
+        st.markdown("#### Your analysis")
+        st.caption("Do not try to guess the model answer. Write what you would actually say or ask in a risk review.")
+
+        observed = st.text_area(
+            "What concerns or control gaps do you see?",
+            height=130,
+            key=f"obs_{selected_case}",
+            placeholder="Example: The absence of MFA may not be the issue for a non-human identity; I would first understand how it authenticates...",
+        )
+        questions = st.text_area(
+            "What would you ask the engineer / control owner next?",
+            height=150,
+            key=f"q_{selected_case}",
+            placeholder="List the evidence or follow-up questions you would request.",
+        )
+        severity_answer = st.radio(
+            "Preliminary severity",
+            ["Low", "Medium", "High", "Critical"],
+            horizontal=True,
+            key=f"sev_{selected_case}",
+        )
+        treatment = st.text_area(
+            "Recommended remediation / next action",
+            height=110,
+            key=f"treat_{selected_case}",
+        )
+
+        if st.button("Submit investigation", type="primary", key=f"submit_{selected_case}"):
+            st.session_state[state_key] = True
+            st.session_state[f"saved_obs_{selected_case}"] = observed
+            st.session_state[f"saved_q_{selected_case}"] = questions
+            st.session_state[f"saved_treat_{selected_case}"] = treatment
+            st.session_state[f"saved_sev_{selected_case}"] = severity_answer
+            st.success("Investigation submitted. Open Framework Lens and Debrief to compare your reasoning.")
+
+    with mapping_tab:
+        st.markdown("#### Regulatory / control-framework lens")
+        st.caption("Use this after forming your technical view. Frameworks should support the risk reasoning, not replace it.")
+        if not st.session_state.get(state_key, False):
+            st.warning("Submit your investigation first. The framework mapping stays hidden so the labels do not give away the case.")
+        else:
+            for name, text in case["frameworks"].items():
+                st.markdown(
+                    f"""
+                    <div class="treatment-card">
+                        <div class="treatment-title">{name}</div>
+                        <div class="treatment-copy">{text}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+    with debrief_tab:
+        if not st.session_state.get(state_key, False):
+            st.warning("Complete and submit the Investigation Workspace before revealing the debrief.")
+        else:
+            your_sev = st.session_state.get(f"saved_sev_{selected_case}", "")
+            if your_sev == case["severity"]:
+                st.success(f"Severity alignment: {case['severity']}")
+            else:
+                st.warning(f"Your preliminary severity: {your_sev} · Model view: {case['severity']}")
+
+            st.markdown("#### Key issues")
+            for item in case["issues"]:
+                st.markdown(f"- {item}")
+
+            st.markdown("#### Questions an experienced IT Risk reviewer would pursue")
+            for item in case["questions"]:
+                st.markdown(f"- {item}")
+
+            st.markdown("#### Suggested remediation")
+            st.info(case["remediation"])
+
+            st.markdown("#### Your submitted notes")
+            st.write("**Observed risks / gaps**")
+            st.write(st.session_state.get(f"saved_obs_{selected_case}", "—") or "—")
+            st.write("**Questions / evidence requested**")
+            st.write(st.session_state.get(f"saved_q_{selected_case}", "—") or "—")
+            st.write("**Your remediation**")
+            st.write(st.session_state.get(f"saved_treat_{selected_case}", "—") or "—")
+
+            st.caption(
+                "Training note: the framework mappings are intentionally high-level. In a real assessment, exact article/control references should be validated against the organisation's approved control framework and regulatory interpretation."
+            )
 
 
 # ============================================================
