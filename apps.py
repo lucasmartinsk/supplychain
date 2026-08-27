@@ -1,3 +1,6 @@
+
+
+
 import base64
 import io
 import sqlite3
@@ -500,6 +503,31 @@ def days_to_contract_end(value):
     if pd.isna(dt):
         return None
     return (dt.normalize() - pd.Timestamp.today().normalize()).days
+
+
+def contract_watch_item(contract_days):
+    """Creates a non-scoring operational alert before contract expiry."""
+    if contract_days is None or contract_days > 90 or contract_days < 0:
+        return None
+    if contract_days <= 30:
+        status = "Urgent"
+        action = (
+            "Confirm the renewal or termination decision immediately and verify that "
+            "Legal, Procurement and the exit owner are engaged."
+        )
+    else:
+        status = "Review"
+        action = (
+            "Confirm the renewal or termination decision, validate required contract "
+            "changes and check whether an exit or transition plan is needed."
+        )
+    return {
+        "status": status,
+        "days": contract_days,
+        "owner": "Relationship Owner — First Line",
+        "action": action,
+        "risk_impact": "None unless the review identifies an actual issue",
+    }
 
 
 # ============================================================
@@ -1014,6 +1042,7 @@ def risk_engine(vendor, documents, subcontractors, requirements):
     inherent = inherent_level(inherent_score)
     compliance = compliance_engine(vendor, documents, requirements)
     contract_days = days_to_contract_end(v.get("contract_end_date"))
+    contract_watch = contract_watch_item(contract_days)
     findings = build_findings(v, compliance, hidden, contract_days, tier)
     effectiveness = control_effectiveness(findings)
     calculated_residual = residual_from_matrix(inherent, effectiveness)
@@ -1052,6 +1081,7 @@ def risk_engine(vendor, documents, subcontractors, requirements):
         "compliance": compliance,
         "hidden_subcontractors": hidden,
         "contract_days": contract_days,
+        "contract_watch": contract_watch,
         "findings": findings,
         "pending_review": compliance["pending"],
     }
@@ -1146,6 +1176,7 @@ if menu == "Executive Dashboard":
             "Vendor": vendor["name"], "Risk": r["level"], "Risk Rank": r["risk_rank"],
             "Criticality": r["criticality_tier"], "Inherent": r["inherent_level"],
             "Controls": r["control_effectiveness"], "Monitoring": r["monitoring"],
+            "Contract Watch": r["contract_watch"]["status"] if r["contract_watch"] else "None",
             "Compliance": r["compliance"]["percentage"], "Hidden": r["hidden_subcontractors"],
             "Findings": len(generate_findings(pd.DataFrame([vendor]), documents, subcontractors, requirements)),
         })
@@ -1157,6 +1188,7 @@ if menu == "Executive Dashboard":
     avg_compliance = int(register["Compliance"].mean())
     total_hidden = int(register["Hidden"].sum())
     open_findings = int(register["Findings"].sum())
+    contract_watch_count = int((register["Contract Watch"] != "None").sum())
 
     overall = (
         "Critical" if high_risk >= 8
@@ -1209,6 +1241,12 @@ if menu == "Executive Dashboard":
                 """,
                 unsafe_allow_html=True,
             )
+
+    if contract_watch_count:
+        st.info(
+            f"{contract_watch_count} contract renewal watch item(s) require first-line review. "
+            "These alerts do not affect residual risk unless an actual contract or exit issue is identified."
+        )
 
     st.write("")
 
@@ -1489,10 +1527,19 @@ elif menu == "Vendor Portfolio":
                 if days < 0:
                     st.error("Contract expired.")
                 elif days <= 90:
-                    st.warning(f"Contract expires in {days} days.")
+                    st.caption(f"Contract expires in {days} days — operational watch active.")
                 else:
                     st.success(f"{days} days remaining.")
             st.markdown("</div>", unsafe_allow_html=True)
+
+        if risk["contract_watch"]:
+            watch = risk["contract_watch"]
+            st.warning(
+                f'Contract Watch Item — {watch["status"]}\n\n'
+                f'**{watch["days"]} days remaining.** {watch["action"]}\n\n'
+                f'Owner: {watch["owner"]}  \n'
+                f'Risk impact: {watch["risk_impact"]}.'
+            )
 
         st.markdown(
             '<div class="section-card"><div class="section-title">Residual Risk Decision Trace</div>',
@@ -1637,6 +1684,7 @@ elif menu == "Risk Register":
             "Residual Risk": r["level"], "Risk Rank": r["risk_rank"],
             "Assessment": r["assessment_quality"],
             "Treatment": r["treatment"], "Monitoring": r["monitoring"],
+            "Contract Watch": r["contract_watch"]["status"] if r["contract_watch"] else "None",
             "Evidence": f'{r["compliance"]["percentage"]}%',
             "Findings": len(generate_findings(pd.DataFrame([vendor]), documents, subcontractors, requirements)),
             "Hidden 4th Parties": r["hidden_subcontractors"],
