@@ -2,6 +2,7 @@ import base64
 import io
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -18,6 +19,7 @@ from reportlab.pdfgen import canvas
 # ============================================================
 
 DB_NAME = "tprm_database.db"
+DEFAULT_DATASET_NAME = "TPRM_Risk_Lab_20_Fictional_Vendor_Cases.xlsx"
 
 REQUIRED_SHEETS = {
     "vendors",
@@ -37,8 +39,8 @@ IAM_USERS = [
 
 ROLE_PERMISSIONS = {
     "Global Administrator": {"*"},
-    "TPRM Analyst": {"dashboard.read", "vendor.read", "assessment.write", "evidence.write", "finding.write", "training.use", "iam.read"},
-    "Risk Oversight (2LoD)": {"dashboard.read", "vendor.read", "assessment.write", "override.write", "finding.challenge", "training.use", "iam.read", "audit.read"},
+    "TPRM Analyst": {"dashboard.read", "vendor.read", "assessment.write", "evidence.write", "finding.write", "training.use", "iam.read", "data.import"},
+    "Risk Oversight (2LoD)": {"dashboard.read", "vendor.read", "assessment.write", "override.write", "finding.challenge", "training.use", "iam.read", "audit.read", "data.import"},
     "Risk Owner": {"dashboard.read", "vendor.read", "risk.accept", "training.use", "iam.read"},
     "Auditor / Read Only": {"dashboard.read", "vendor.read", "iam.read", "audit.read"},
 }
@@ -48,7 +50,7 @@ PAGE_PERMISSIONS = {
     "Risk Register": "vendor.read", "Findings & Remediation": "vendor.read",
     "Fourth-Party Risk": "vendor.read", "Document Compliance": "vendor.read",
     "Sample Document Library": "vendor.read", "Assessment Simulation": "training.use",
-    "IT Risk / GRC Practice Lab": "training.use", "Data Import": "admin.data",
+    "IT Risk / GRC Practice Lab": "training.use", "Data Import": "data.import",
     "Identity & Access": "iam.read",
 }
 
@@ -480,6 +482,32 @@ def save_table(df, table_name):
     finally:
         conn.close()
     load_data.clear()
+
+
+def restore_default_dataset_if_needed():
+    """Rebuilds the transient SQLite dataset from a workbook committed with the app."""
+    if table_exists("vendors"):
+        existing = load_data("vendors")
+        if not existing.empty:
+            return False
+
+    workbook_path = Path(__file__).resolve().with_name(DEFAULT_DATASET_NAME)
+    if not workbook_path.exists():
+        return False
+
+    xls = pd.ExcelFile(workbook_path)
+    available = {sheet.strip().lower(): sheet for sheet in xls.sheet_names}
+    required = REQUIRED_SHEETS - {"findings"}
+    if not required.issubset(available):
+        return False
+
+    for table_name in ["vendors", "documents", "subcontractors", "document_requirements"]:
+        frame = normalize_columns(pd.read_excel(xls, sheet_name=available[table_name]))
+        save_table(frame, table_name)
+    if "findings" in available:
+        frame = normalize_columns(pd.read_excel(xls, sheet_name=available["findings"]))
+        save_table(frame, "findings")
+    return True
 
 
 def save_document_file(vendor_id, doc_type, filename, content_type, file_bytes):
@@ -1221,6 +1249,7 @@ def generate_findings(vendor, documents, subcontractors, requirements):
 ensure_document_files_table()
 ensure_vendor_assessments_table()
 ensure_iam_tables()
+default_dataset_restored = restore_default_dataset_if_needed()
 
 vendors = load_data("vendors")
 documents = load_data("documents")
@@ -3382,7 +3411,8 @@ elif menu == "Identity & Access":
             ("Update assessment inputs", "assessment.write"), ("Apply human override", "override.write"),
             ("Attach evidence", "evidence.write"), ("Manage findings", "finding.write"),
             ("Challenge findings", "finding.challenge"), ("Accept residual risk", "risk.accept"),
-            ("Import datasets", "admin.data"), ("View audit trail", "audit.read"),
+            ("Import datasets", "data.import"), ("Administer identities", "admin.data"),
+            ("View audit trail", "audit.read"),
         ]
         matrix = []
         for role, permissions in ROLE_PERMISSIONS.items():
