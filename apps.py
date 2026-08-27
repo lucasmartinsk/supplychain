@@ -307,11 +307,41 @@ def ensure_document_files_table():
         conn.close()
 
 
+def ensure_vendor_assessments_table():
+    """Stores explainable, vendor-level inputs without changing the source workbook."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS vendor_assessments (
+                vendor_id INTEGER PRIMARY KEY,
+                service_interruption INTEGER,
+                customer_impact INTEGER,
+                regulatory_importance INTEGER,
+                substitutability INTEGER,
+                data_exposure INTEGER,
+                system_access INTEGER,
+                customer_transaction_exposure INTEGER,
+                delivery_exposure INTEGER,
+                fourth_party_exposure INTEGER,
+                override_rating TEXT,
+                override_reason TEXT,
+                override_review_date TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 @st.cache_data(ttl=30)
 def load_data(table_name):
     allowed = {
         "vendors", "documents", "subcontractors",
         "document_requirements", "findings", "document_files",
+        "vendor_assessments",
     }
     if table_name not in allowed or not table_exists(table_name):
         return pd.DataFrame()
@@ -347,6 +377,36 @@ def save_document_file(vendor_id, doc_type, filename, content_type, file_bytes):
                 int(vendor_id), str(doc_type), filename, content_type,
                 b64, datetime.now().strftime("%Y-%m-%d %H:%M"),
             ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    load_data.clear()
+
+
+def save_vendor_assessment(vendor_id, values):
+    ensure_vendor_assessments_table()
+    columns = [
+        "service_interruption", "customer_impact", "regulatory_importance",
+        "substitutability", "data_exposure", "system_access",
+        "customer_transaction_exposure", "delivery_exposure",
+        "fourth_party_exposure", "override_rating", "override_reason",
+        "override_review_date",
+    ]
+    payload = [values.get(column) for column in columns]
+    conn = get_connection()
+    try:
+        placeholders = ", ".join(["?"] * (len(columns) + 2))
+        updates = ", ".join([f"{column}=excluded.{column}" for column in columns])
+        conn.execute(
+            f"""
+            INSERT INTO vendor_assessments
+                (vendor_id, {', '.join(columns)}, updated_at)
+            VALUES ({placeholders})
+            ON CONFLICT(vendor_id) DO UPDATE SET
+                {updates}, updated_at=excluded.updated_at
+            """,
+            [int(vendor_id), *payload, datetime.now().strftime("%Y-%m-%d %H:%M")],
         )
         conn.commit()
     finally:
@@ -697,41 +757,230 @@ def compliance_engine(vendor, documents, requirements):
 # RISK ENGINE
 # ============================================================
 
-def risk_engine(vendor, documents, subcontractors, requirements):
-    v = vendor.iloc[0]
+RISK_ORDER = {"Low": 0, "Medium": 1, "High": 2, "Critical": 3, "Review Required": -1}
 
-    criticality = str(v.get("criticality", "Low")).lower()
-    data_access = str(v.get("data_accessed", "None")).lower()
+CRITICALITY_FIELDS = [
+    "service_interruption", "customer_impact",
+    "regulatory_importance", "substitutability",
+]
 
-    criticality_score = {
-        "critical": 30, "high": 22, "medium": 12, "low": 4,
-    }.get(criticality, 5)
+INHERENT_FIELDS = [
+    "data_exposure", "system_access", "customer_transaction_exposure",
+    "delivery_exposure", "fourth_party_exposure",
+]
 
-    if "payment" in data_access:
-        data_score = 20
-    elif "client pii" in data_access and "employee data" in data_access:
-        data_score = 18
-    elif "client pii" in data_access:
-        data_score = 16
-    elif "employee data" in data_access:
-        data_score = 12
-    elif "security logs" in data_access:
-        data_score = 15
-    elif "none" in data_access:
+FIELD_LABELS = {
+    "service_interruption": "Service interruption",
+    "customer_impact": "Customer impact",
+    "regulatory_importance": "Regulatory importance",
+    "substitutability": "Substitutability and exit",
+    "data_exposure": "Data exposure",
+    "system_access": "System access",
+    "customer_transaction_exposure": "Customer / transaction exposure",
+    "delivery_exposure": "Delivery exposure",
+    "fourth_party_exposure": "Fourth-party exposure",
+}
+
+
+def assessment_row(vendor_id):
+    rows = load_data("vendor_assessments")
+    if rows.empty:
+        return {}
+    match = rows[rows["vendor_id"] == vendor_id]
+    return {} if match.empty else match.iloc[-1].to_dict()
+
+
+def valid_assessment_value(value):
+    if value is None or pd.isna(value):
+        return False
+    try:
+        return int(value) in {0, 1, 2, 3}
+    except (TypeError, ValueError):
+        return False
+
+
+def legacy_tier(value):
+    mapping = {
+        "critical": "Tier 1 — Critical",
+        "high": "Tier 2 — High Importance",
+        "medium": "Tier 3 — Moderate",
+        "low": "Tier 4 — Low",
+    }
+    return mapping.get(str(value).strip().lower(), "Review Required")
+
+
+def tier_from_score(score):
+    if score >= 10:
+        return "Tier 1 — Critical"
+    if score >= 7:
+        return "Tier 2 — High Importance"
+    if score >= 4:
+        return "Tier 3 — Moderate"
+    return "Tier 4 — Low"
+
+
+def tier_number(tier):
+    for number in (1, 2, 3, 4):
+        if str(tier).startswith(f"Tier {number}"):
+            return number
+    return None
+
+
+def inherent_level(score):
+    if score <= 3:
+        return "Low"
+    if score <= 7:
+        return "Medium"
+    if score <= 11:
+        return "High"
+    return "Very High"
+
+
+def derive_provisional_inherent(v, subs):
+    """Creates visible mock-data mappings; every derived input is labelled provisional."""
+    data = str(v.get("data_accessed", "None")).strip().lower()
+    service = str(v.get("service_type", "")).strip().lower()
+    legacy = str(v.get("criticality", "Low")).strip().lower()
+
+    if "payment" in data or ("client pii" in data and "employee data" in data):
+        data_score = 3
+    elif any(term in data for term in ["client pii", "employee data", "security logs"]):
+        data_score = 2
+    elif data in {"", "none", "nan"}:
         data_score = 0
     else:
-        data_score = 8
+        data_score = 1
 
-    compliance = compliance_engine(vendor, documents, requirements)
+    if any(term in service for term in ["core", "cloud", "hosting", "infrastructure", "managed", "security", "api"]):
+        system_score = 2
+    elif any(term in service for term in ["software", "platform", "saas", "analytics"]):
+        system_score = 1
+    else:
+        system_score = 0
 
-    evidence_gap = (
-        len(compliance["missing"]) * 7
-        + len(compliance["expired"]) * 6
-        + len(compliance["pending"]) * 3
+    if any(term in (service + " " + data) for term in ["payment", "transaction", "core banking"]):
+        customer_score = 3
+    elif any(term in (service + " " + data) for term in ["client", "customer"]):
+        customer_score = 2
+    elif "employee" in data:
+        customer_score = 1
+    else:
+        customer_score = 0
+
+    delivery_score = {"critical": 3, "high": 2, "medium": 1, "low": 0}.get(legacy, 1)
+
+    if subs.empty:
+        fourth_score = 0
+    else:
+        hidden = sum(not truthy(x) for x in subs.get("disclosed_by_vendor", []))
+        fourth_score = 3 if hidden > 1 else 2 if hidden == 1 else 1
+
+    values = {
+        "data_exposure": data_score,
+        "system_access": system_score,
+        "customer_transaction_exposure": customer_score,
+        "delivery_exposure": delivery_score,
+        "fourth_party_exposure": fourth_score,
+    }
+    sources = {
+        "data_exposure": f"Modelled from imported data_accessed: {v.get('data_accessed', 'Not provided')}",
+        "system_access": f"Provisional mapping from service_type: {v.get('service_type', 'Not provided')}",
+        "customer_transaction_exposure": "Provisional mapping from service and data fields",
+        "delivery_exposure": f"Provisional mapping from imported criticality: {v.get('criticality', 'Not provided')}",
+        "fourth_party_exposure": f"Modelled from {len(subs)} subcontractor record(s)",
+    }
+    return values, sources
+
+
+def finding_severity(base, tier):
+    number = tier_number(tier)
+    if base == "material":
+        return "High" if number in {1, 2} else "Medium"
+    return "Medium" if number in {1, 2} else "Low"
+
+
+def build_findings(v, compliance, hidden, contract_days, tier):
+    findings = []
+    for status, docs in (("Missing", compliance["missing"]), ("Expired", compliance["expired"])):
+        for doc in docs:
+            severity = finding_severity("material", tier)
+            findings.append({
+                "vendor_id": v["vendor_id"], "vendor_name": v["name"],
+                "severity": severity, "finding_type": f"{status} Evidence",
+                "domain": "Information Security / Evidence",
+                "description": f"Required document {status.lower()}: {doc}",
+                "rationale": f"Severity reflects {tier} and the absence of a valid required artefact.",
+            })
+
+    if hidden:
+        severity = finding_severity("material" if hidden > 1 else "limited", tier)
+        findings.append({
+            "vendor_id": v["vendor_id"], "vendor_name": v["name"],
+            "severity": severity, "finding_type": "Fourth-Party Risk",
+            "domain": "Fourth-Party Management",
+            "description": f"{hidden} undisclosed subcontractor relationship(s) identified.",
+            "rationale": "The transparency failure is assessed in proportion to service importance and dependency count.",
+        })
+
+    if contract_days is not None and contract_days < 0:
+        severity = finding_severity("material", tier)
+        findings.append({
+            "vendor_id": v["vendor_id"], "vendor_name": v["name"],
+            "severity": severity, "finding_type": "Contract",
+            "domain": "Contract and Exit",
+            "description": "Contract has expired and requires confirmation of the current legal basis for service continuation.",
+            "rationale": "An expired contract is an active issue; an approaching date alone is not scored.",
+        })
+    return findings
+
+
+def control_effectiveness(findings):
+    severities = [item["severity"] for item in findings]
+    high_count = severities.count("High")
+    medium_count = severities.count("Medium")
+    systemic_high = any(
+        item.get("severity") == "High" and item.get("systemic")
+        for item in findings
     )
-    evidence_score = min(20, evidence_gap)
+    if "Critical" in severities or systemic_high:
+        return "Ineffective"
+    if high_count == 1 or medium_count >= 3:
+        return "Partially Effective"
+    if severities:
+        return "Mostly Effective"
+    return "Effective"
 
+
+def residual_from_matrix(inherent, effectiveness):
+    matrix = {
+        "Low": {"Effective": "Low", "Mostly Effective": "Low", "Partially Effective": "Medium", "Ineffective": "High"},
+        "Medium": {"Effective": "Low", "Mostly Effective": "Medium", "Partially Effective": "High", "Ineffective": "High"},
+        "High": {"Effective": "Medium", "Mostly Effective": "High", "Partially Effective": "High", "Ineffective": "Critical"},
+        "Very High": {"Effective": "High", "Mostly Effective": "High", "Partially Effective": "Critical", "Ineffective": "Critical"},
+    }
+    return matrix[inherent][effectiveness]
+
+
+def treatment_for_rating(rating):
+    return {
+        "Low": ("Monitor", "Approval and normal monitoring."),
+        "Medium": ("Monitor / Mitigate", "Approval may proceed with proportionate remediation where required."),
+        "High": ("Mitigate / Accept", "Conditional approval, formal remediation, enhanced monitoring and senior risk acceptance."),
+        "Critical": ("Avoid / Escalate", "Avoid or suspend unless an extraordinary time-bound exception is approved."),
+    }.get(rating, ("Review Required", "Complete the assessment before approval."))
+
+
+def monitoring_frequency(tier, rating):
+    tier_frequency = {1: "Quarterly", 2: "Semi-annual", 3: "Annual", 4: "Event-driven"}.get(tier_number(tier), "Review Required")
+    risk_frequency = {"Critical": "Monthly / continuous", "High": "Quarterly", "Medium": "Semi-annual", "Low": "Annual"}.get(rating, "Review Required")
+    rank = {"Monthly / continuous": 0, "Quarterly": 1, "Semi-annual": 2, "Annual": 3, "Event-driven": 4, "Review Required": 5}
+    return min([tier_frequency, risk_frequency], key=lambda value: rank[value])
+
+
+def risk_engine(vendor, documents, subcontractors, requirements):
+    v = vendor.iloc[0]
     vendor_id = v["vendor_id"]
+    saved = assessment_row(vendor_id)
     subs = subcontractors[
         subcontractors["parent_vendor_id"] == vendor_id
     ] if not subcontractors.empty else pd.DataFrame()
@@ -740,52 +989,71 @@ def risk_engine(vendor, documents, subcontractors, requirements):
     if not subs.empty and "disclosed_by_vendor" in subs.columns:
         hidden = sum(not truthy(x) for x in subs["disclosed_by_vendor"])
 
-    fourth_party_score = min(15, hidden * 8)
+    manual_criticality = all(valid_assessment_value(saved.get(field)) for field in CRITICALITY_FIELDS)
+    if manual_criticality:
+        criticality_factors = {field: int(saved[field]) for field in CRITICALITY_FIELDS}
+        criticality_score = sum(criticality_factors.values())
+        tier = tier_from_score(criticality_score)
+        criticality_source = "Factor assessment"
+    else:
+        criticality_factors = {}
+        criticality_score = None
+        tier = legacy_tier(v.get("criticality"))
+        criticality_source = "Imported classification — complete factor assessment to verify"
 
+    manual_inherent = all(valid_assessment_value(saved.get(field)) for field in INHERENT_FIELDS)
+    if manual_inherent:
+        inherent_factors = {field: int(saved[field]) for field in INHERENT_FIELDS}
+        inherent_sources = {field: "Confirmed assessment input" for field in INHERENT_FIELDS}
+        assessment_quality = "Verified"
+    else:
+        inherent_factors, inherent_sources = derive_provisional_inherent(v, subs)
+        assessment_quality = "Provisional — review modelled inputs"
+
+    inherent_score = sum(inherent_factors.values())
+    inherent = inherent_level(inherent_score)
+    compliance = compliance_engine(vendor, documents, requirements)
     contract_days = days_to_contract_end(v.get("contract_end_date"))
+    findings = build_findings(v, compliance, hidden, contract_days, tier)
+    effectiveness = control_effectiveness(findings)
+    calculated_residual = residual_from_matrix(inherent, effectiveness)
 
-    if contract_days is None:
-        contract_score = 5
-    elif contract_days < 0:
-        contract_score = 10
-    elif contract_days <= 90:
-        contract_score = 7
-    elif contract_days <= 180:
-        contract_score = 3
-    else:
-        contract_score = 0
-
-    vendor_status = str(v.get("status", "")).lower()
-    status_score = 5 if vendor_status in {"under review", "terminated"} else 0
-
-    score = min(
-        100,
-        criticality_score + data_score + evidence_score
-        + fourth_party_score + contract_score + status_score,
-    )
-
-    if score >= 75:
-        level = "Critical"
-    elif score >= 50:
-        level = "High"
-    elif score >= 25:
-        level = "Medium"
-    else:
-        level = "Low"
+    override = str(saved.get("override_rating", "") or "").strip()
+    override_reason = str(saved.get("override_reason", "") or "").strip()
+    valid_override = override in {"Low", "Medium", "High", "Critical"} and bool(override_reason)
+    final_residual = override if valid_override else calculated_residual
+    treatment, treatment_copy = treatment_for_rating(final_residual)
 
     drivers = [
-        ("Criticality", criticality_score, 30),
-        ("Data sensitivity", data_score, 20),
-        ("Documentation", evidence_score, 20),
-        ("Fourth-party exposure", fourth_party_score, 15),
-        ("Contract", contract_score, 10),
-        ("Operational status", status_score, 5),
+        (FIELD_LABELS[field], inherent_factors[field], 3, inherent_sources[field])
+        for field in INHERENT_FIELDS
     ]
 
     return {
-        "score": score, "level": level, "drivers": drivers,
-        "compliance": compliance, "hidden_subcontractors": hidden,
+        "criticality_tier": tier,
+        "criticality_score": criticality_score,
+        "criticality_factors": criticality_factors,
+        "criticality_source": criticality_source,
+        "inherent_score": inherent_score,
+        "inherent_level": inherent,
+        "assessment_quality": assessment_quality,
+        "drivers": drivers,
+        "control_effectiveness": effectiveness,
+        "calculated_residual": calculated_residual,
+        "final_residual": final_residual,
+        "level": final_residual,
+        "risk_rank": RISK_ORDER[final_residual],
+        "override_applied": valid_override,
+        "override_reason": override_reason if valid_override else "",
+        "override_review_date": saved.get("override_review_date", "") if valid_override else "",
+        "treatment": treatment,
+        "treatment_copy": treatment_copy,
+        "monitoring": monitoring_frequency(tier, final_residual),
+        "compliance": compliance,
+        "hidden_subcontractors": hidden,
         "contract_days": contract_days,
+        "findings": findings,
+        "pending_review": compliance["pending"],
     }
 
 
@@ -794,52 +1062,7 @@ def risk_engine(vendor, documents, subcontractors, requirements):
 # ============================================================
 
 def generate_findings(vendor, documents, subcontractors, requirements):
-    result = risk_engine(vendor, documents, subcontractors, requirements)
-    v = vendor.iloc[0]
-    findings = []
-
-    for doc in result["compliance"]["missing"]:
-        findings.append({
-            "vendor_id": v["vendor_id"], "vendor_name": v["name"],
-            "severity": "High", "finding_type": "Missing Evidence",
-            "description": f"Required document missing: {doc}",
-        })
-    for doc in result["compliance"]["expired"]:
-        findings.append({
-            "vendor_id": v["vendor_id"], "vendor_name": v["name"],
-            "severity": "High", "finding_type": "Expired Evidence",
-            "description": f"Required document expired: {doc}",
-        })
-    for doc in result["compliance"]["pending"]:
-        findings.append({
-            "vendor_id": v["vendor_id"], "vendor_name": v["name"],
-            "severity": "Medium", "finding_type": "Pending Evidence",
-            "description": f"Required document pending: {doc}",
-        })
-    if result["hidden_subcontractors"]:
-        findings.append({
-            "vendor_id": v["vendor_id"], "vendor_name": v["name"],
-            "severity": "High", "finding_type": "Fourth-Party Risk",
-            "description": (
-                f'{result["hidden_subcontractors"]} undisclosed '
-                "subcontractor relationship(s) identified."
-            ),
-        })
-    if result["contract_days"] is not None:
-        if result["contract_days"] < 0:
-            findings.append({
-                "vendor_id": v["vendor_id"], "vendor_name": v["name"],
-                "severity": "High", "finding_type": "Contract",
-                "description": "Contract has expired.",
-            })
-        elif result["contract_days"] <= 90:
-            findings.append({
-                "vendor_id": v["vendor_id"], "vendor_name": v["name"],
-                "severity": "Medium", "finding_type": "Contract",
-                "description": f'Contract expires in {result["contract_days"]} days.',
-            })
-
-    return findings
+    return risk_engine(vendor, documents, subcontractors, requirements)["findings"]
 
 
 # ============================================================
@@ -847,6 +1070,7 @@ def generate_findings(vendor, documents, subcontractors, requirements):
 # ============================================================
 
 ensure_document_files_table()
+ensure_vendor_assessments_table()
 
 vendors = load_data("vendors")
 documents = load_data("documents")
@@ -919,14 +1143,16 @@ if menu == "Executive Dashboard":
     for _, vendor in vendors.iterrows():
         r = risk_engine(pd.DataFrame([vendor]), documents, subcontractors, requirements)
         results.append({
-            "Vendor": vendor["name"], "Risk": r["level"], "Score": r["score"],
+            "Vendor": vendor["name"], "Risk": r["level"], "Risk Rank": r["risk_rank"],
+            "Criticality": r["criticality_tier"], "Inherent": r["inherent_level"],
+            "Controls": r["control_effectiveness"], "Monitoring": r["monitoring"],
             "Compliance": r["compliance"]["percentage"], "Hidden": r["hidden_subcontractors"],
             "Findings": len(generate_findings(pd.DataFrame([vendor]), documents, subcontractors, requirements)),
         })
 
     register = pd.DataFrame(results)
 
-    critical = int((vendors["criticality"].astype(str).str.lower() == "critical").sum())
+    critical = int(register["Criticality"].astype(str).str.startswith("Tier 1").sum())
     high_risk = int(register["Risk"].isin(["Critical", "High"]).sum())
     avg_compliance = int(register["Compliance"].mean())
     total_hidden = int(register["Hidden"].sum())
@@ -939,7 +1165,6 @@ if menu == "Executive Dashboard":
         else "Low"
     )
 
-    score_proxy = int(register["Score"].mean()) if not register.empty else 0
     st.markdown(
         f"""
         <div class="console-card">
@@ -954,8 +1179,8 @@ if menu == "Executive Dashboard":
                     </div>
                 </div>
                 <div style="min-width:150px;text-align:right;">
-                    <div class="console-score">{score_proxy}</div>
-                    <div class="console-score-label">Avg. Risk Score / 100</div>
+                    <div class="console-score" style="font-size:1.65rem;">{overall}</div>
+                    <div class="console-score-label">Portfolio Residual Risk</div>
                     <div style="margin-top:.45rem;">{badge(overall)}</div>
                 </div>
             </div>
@@ -994,6 +1219,7 @@ if menu == "Executive Dashboard":
             '<div class="section-card"><div class="section-title">Risk Exposure</div>',
             unsafe_allow_html=True,
         )
+
         distribution = register["Risk"].value_counts().reindex(
             ["Critical", "High", "Medium", "Low"], fill_value=0,
         )
@@ -1007,7 +1233,7 @@ if menu == "Executive Dashboard":
         )
         attention = register[
             register["Risk"].isin(["Critical", "High"])
-        ].sort_values("Score", ascending=False).head(6)
+        ].sort_values(["Risk Rank", "Findings"], ascending=False).head(6)
 
         if attention.empty:
             st.success("No High or Critical risk vendors identified.")
@@ -1024,7 +1250,7 @@ if menu == "Executive Dashboard":
                             </div>
                         </div>
                         <div>{badge(row["Risk"])}</div>
-                        <div class="attention-score">{row["Score"]}</div>
+                        <div class="attention-score" style="font-size:.68rem;">{row["Monitoring"]}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -1054,7 +1280,7 @@ elif menu == "Vendor Portfolio":
 
     c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
-        crit = st.selectbox("Criticality", ["All", "Critical", "High", "Medium", "Low"])
+        crit = st.selectbox("Imported Criticality", ["All", "Critical", "High", "Medium", "Low"])
     with c2:
         status = st.selectbox("Status", ["All"] + sorted(vendors["status"].astype(str).unique()))
     with c3:
@@ -1094,12 +1320,13 @@ elif menu == "Vendor Portfolio":
                         <div class="console-title">{v["name"]}</div>
                         <div class="console-copy">
                             {v["service_type"]} - {v["data_accessed"]}<br>
-                            Criticality: <strong>{v["criticality"]}</strong>
+                            Criticality: <strong>{risk["criticality_tier"]}</strong><br>
+                            Assessment: <strong>{risk["assessment_quality"]}</strong>
                         </div>
                     </div>
                     <div style="text-align:right;">
-                        <div class="console-score">{risk["score"]}</div>
-                        <div class="console-score-label">Risk Score / 100</div>
+                        <div class="console-score" style="font-size:1.8rem;">{risk["final_residual"]}</div>
+                        <div class="console-score-label">Final Residual Risk</div>
                         <div style="margin-top:.4rem;">{badge(risk["level"])}</div>
                     </div>
                 </div>
@@ -1108,9 +1335,6 @@ elif menu == "Vendor Portfolio":
             unsafe_allow_html=True,
         )
 
-        inherent_score = risk["drivers"][0][1] + risk["drivers"][1][1]
-        residual_score = risk["score"]
-
         st.markdown(
             f"""
             <div class="section-card">
@@ -1118,17 +1342,17 @@ elif menu == "Vendor Portfolio":
                 <div class="risk-flow">
                     <div class="risk-node">
                         <div class="risk-node-label">Inherent Risk</div>
-                        <div class="risk-node-value">{inherent_score}/50</div>
+                        <div class="risk-node-value">{risk["inherent_level"]} · {risk["inherent_score"]}/15</div>
                     </div>
                     <div class="risk-arrow">-></div>
                     <div class="risk-node">
-                        <div class="risk-node-label">Controls / Evidence</div>
-                        <div class="risk-node-value">{risk["compliance"]["percentage"]}% coverage</div>
+                        <div class="risk-node-label">Control Effectiveness</div>
+                        <div class="risk-node-value">{risk["control_effectiveness"]}</div>
                     </div>
                     <div class="risk-arrow">-></div>
                     <div class="risk-node">
-                        <div class="risk-node-label">Current Exposure</div>
-                        <div class="risk-node-value">{residual_score}/100</div>
+                        <div class="risk-node-label">Residual Risk</div>
+                        <div class="risk-node-value">{risk["final_residual"]}</div>
                     </div>
                 </div>
             </div>
@@ -1136,13 +1360,92 @@ elif menu == "Vendor Portfolio":
             unsafe_allow_html=True,
         )
 
+        if risk["criticality_factors"]:
+            calculation = " + ".join(
+                f'{FIELD_LABELS[field]} {value}'
+                for field, value in risk["criticality_factors"].items()
+            )
+            st.caption(
+                f'Criticality calculation: {calculation} = '
+                f'{risk["criticality_score"]}/12 → {risk["criticality_tier"]}'
+            )
+        else:
+            st.caption(
+                f'Criticality source: {risk["criticality_source"]}. '
+                "Open the assessment inputs to complete the transparent 0–12 factor calculation."
+            )
+
+        with st.expander("Assessment inputs and human override"):
+            st.caption(
+                "Confirm the inputs used by the model. Until all inherent-risk inputs are saved, "
+                "the rating is clearly marked as provisional."
+            )
+            saved = assessment_row(v["vendor_id"])
+            score_options = [None, 0, 1, 2, 3]
+            score_labels = {
+                None: "Review Required", 0: "0 — None / negligible",
+                1: "1 — Limited", 2: "2 — Significant", 3: "3 — Severe",
+            }
+
+            def saved_index(field):
+                value = saved.get(field)
+                return score_options.index(int(value)) if valid_assessment_value(value) else 0
+
+            with st.form(f"assessment_{v['vendor_id']}"):
+                st.markdown("**Criticality factors**")
+                criticality_values = {}
+                crit_cols = st.columns(2)
+                for index, field in enumerate(CRITICALITY_FIELDS):
+                    with crit_cols[index % 2]:
+                        criticality_values[field] = st.selectbox(
+                            FIELD_LABELS[field], score_options, index=saved_index(field),
+                            format_func=lambda value: score_labels[value], key=f"{field}_{v['vendor_id']}",
+                        )
+
+                st.markdown("**Inherent-risk factors**")
+                inherent_values = {}
+                inherent_cols = st.columns(2)
+                for index, field in enumerate(INHERENT_FIELDS):
+                    with inherent_cols[index % 2]:
+                        inherent_values[field] = st.selectbox(
+                            FIELD_LABELS[field], score_options, index=saved_index(field),
+                            format_func=lambda value: score_labels[value], key=f"{field}_{v['vendor_id']}",
+                        )
+
+                st.markdown("**Human override — optional**")
+                override_options = ["No override", "Low", "Medium", "High", "Critical"]
+                current_override = str(saved.get("override_rating", "") or "")
+                override_default = override_options.index(current_override) if current_override in override_options else 0
+                override_rating = st.selectbox("Final rating override", override_options, index=override_default)
+                override_reason = st.text_area(
+                    "Override reason", value=str(saved.get("override_reason", "") or ""),
+                    placeholder="Required when an override is selected.",
+                )
+                override_review_date = st.text_input(
+                    "Override review date", value=str(saved.get("override_review_date", "") or ""),
+                    placeholder="YYYY-MM-DD",
+                )
+
+                if st.form_submit_button("Save Assessment", type="primary", use_container_width=True):
+                    if override_rating != "No override" and not override_reason.strip():
+                        st.error("Document the reason before applying a human override.")
+                    else:
+                        save_vendor_assessment(v["vendor_id"], {
+                            **criticality_values, **inherent_values,
+                            "override_rating": "" if override_rating == "No override" else override_rating,
+                            "override_reason": override_reason.strip(),
+                            "override_review_date": override_review_date.strip(),
+                        })
+                        st.success("Assessment saved.")
+                        st.rerun()
+
         left, right = st.columns([1.05, .95])
         with left:
             st.markdown(
                 '<div class="section-card"><div class="section-title">Risk Drivers</div>',
                 unsafe_allow_html=True,
             )
-            for name, value, maximum in risk["drivers"]:
+            for name, value, maximum, source in risk["drivers"]:
                 pct = int(value / maximum * 100) if maximum else 0
                 st.markdown(
                     f"""
@@ -1156,6 +1459,14 @@ elif menu == "Vendor Portfolio":
                     """,
                     unsafe_allow_html=True,
                 )
+                st.caption(source)
+            st.markdown(
+                f'**Inherent Risk Total: {risk["inherent_score"]}/15 — {risk["inherent_level"]}**'
+            )
+            st.caption(
+                f'Assessment status: {risk["assessment_quality"]}. '
+                "Modelled inputs remain visible and should be confirmed by a reviewer."
+            )
             st.markdown("</div>", unsafe_allow_html=True)
 
         with right:
@@ -1165,7 +1476,8 @@ elif menu == "Vendor Portfolio":
             )
             st.markdown(
                 f"""
-                <div class="signal"><span class="signal-name">Criticality</span><span class="signal-value">{v["criticality"]}</span></div>
+                <div class="signal"><span class="signal-name">Criticality</span><span class="signal-value">{risk["criticality_tier"]}</span></div>
+                <div class="signal"><span class="signal-name">Criticality source</span><span class="signal-value">{risk["criticality_source"]}</span></div>
                 <div class="signal"><span class="signal-name">Vendor status</span><span class="signal-value">{v["status"]}</span></div>
                 <div class="signal"><span class="signal-name">Onboarded</span><span class="signal-value">{v["onboarded_date"]}</span></div>
                 <div class="signal"><span class="signal-name">Contract end</span><span class="signal-value">{v["contract_end_date"]}</span></div>
@@ -1181,6 +1493,31 @@ elif menu == "Vendor Portfolio":
                 else:
                     st.success(f"{days} days remaining.")
             st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown(
+            '<div class="section-card"><div class="section-title">Residual Risk Decision Trace</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"""
+            <div class="signal"><span class="signal-name">Inherent Risk</span><span class="signal-value">{risk["inherent_level"]}</span></div>
+            <div class="signal"><span class="signal-name">Control Effectiveness</span><span class="signal-value">{risk["control_effectiveness"]}</span></div>
+            <div class="signal"><span class="signal-name">Calculated Residual Risk</span><span class="signal-value">{risk["calculated_residual"]}</span></div>
+            <div class="signal"><span class="signal-name">Human Override</span><span class="signal-value">{'Applied' if risk["override_applied"] else 'None'}</span></div>
+            <div class="signal"><span class="signal-name">Final Residual Risk</span><span class="signal-value">{risk["final_residual"]}</span></div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if risk["override_applied"]:
+            st.warning(
+                f'Override rationale: {risk["override_reason"]} · '
+                f'Review date: {risk["override_review_date"] or "Not provided"}'
+            )
+        st.caption(
+            "Matrix rule: the final calculated rating is the intersection of Inherent Risk "
+            "and Control Effectiveness. Criticality determines oversight frequency and is not added as a penalty."
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
 
         # --- Evidence Posture + attach/view files ---
         st.markdown(
@@ -1226,6 +1563,11 @@ elif menu == "Vendor Portfolio":
                         st.success("File attached. Reopen this panel to preview it.")
         else:
             st.success("No evidence gaps identified by the current compliance engine.")
+        if risk["pending_review"]:
+            st.caption(
+                "Pending evidence is shown for follow-up but does not reduce Control Effectiveness "
+                "until a due date or an actual overdue exposure is established."
+            )
         st.markdown("</div>", unsafe_allow_html=True)
 
         generated = generate_findings(vendor, documents, subcontractors, requirements)
@@ -1234,36 +1576,8 @@ elif menu == "Vendor Portfolio":
             '<div class="section-card"><div class="section-title">Recommended Risk Treatment</div>',
             unsafe_allow_html=True,
         )
-        if risk["compliance"]["missing"] or risk["compliance"]["expired"]:
-            treatment_title = "Mitigate - remediate evidence gaps"
-            treatment_copy = (
-                "Prioritize missing or expired evidence before risk acceptance. "
-                "Request current artifacts, validate scope and record remediation evidence."
-            )
-        elif risk["hidden_subcontractors"]:
-            treatment_title = "Mitigate - investigate fourth-party exposure"
-            treatment_copy = (
-                "Obtain the complete subcontractor chain, validate disclosure and "
-                "assess whether the dependency changes the vendor's risk posture."
-            )
-        elif risk["contract_days"] is not None and risk["contract_days"] <= 90:
-            treatment_title = "Mitigate - contract review"
-            treatment_copy = (
-                "Trigger contract-owner review and confirm renewal, termination "
-                "and right-to-audit considerations before expiry."
-            )
-        elif risk["level"] in ["Critical", "High"]:
-            treatment_title = "Mitigate / Accept - governance decision required"
-            treatment_copy = (
-                "Risk remains above the lower-risk bands. Document treatment, "
-                "owner and due date; escalate for formal risk acceptance where appropriate."
-            )
-        else:
-            treatment_title = "Monitor - maintain evidence posture"
-            treatment_copy = (
-                "No immediate high-severity gap is generated by the current model. "
-                "Continue periodic monitoring and evidence refresh."
-            )
+        treatment_title = risk["treatment"]
+        treatment_copy = risk["treatment_copy"] + f' Monitoring frequency: {risk["monitoring"]}.'
 
         st.markdown(
             f"""
@@ -1289,7 +1603,8 @@ elif menu == "Vendor Portfolio":
                     f"""
                     <div class="finding {cls}">
                         <div class="finding-title">{f["severity"]} - {f["finding_type"]}</div>
-                        <div class="finding-detail">{f["description"]}</div>
+                        <div class="finding-detail">{f["domain"]} · {f["description"]}</div>
+                        <div class="finding-detail">Rationale: {f["rationale"]}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -1316,8 +1631,12 @@ elif menu == "Risk Register":
     for _, vendor in vendors.iterrows():
         r = risk_engine(pd.DataFrame([vendor]), documents, subcontractors, requirements)
         rows.append({
-            "Vendor": vendor["name"], "Criticality": vendor["criticality"],
-            "Risk": r["level"], "Score": r["score"],
+            "Vendor": vendor["name"], "Criticality": r["criticality_tier"],
+            "Inherent Risk": r["inherent_level"],
+            "Control Effectiveness": r["control_effectiveness"],
+            "Residual Risk": r["level"], "Risk Rank": r["risk_rank"],
+            "Assessment": r["assessment_quality"],
+            "Treatment": r["treatment"], "Monitoring": r["monitoring"],
             "Evidence": f'{r["compliance"]["percentage"]}%',
             "Findings": len(generate_findings(pd.DataFrame([vendor]), documents, subcontractors, requirements)),
             "Hidden 4th Parties": r["hidden_subcontractors"],
@@ -1329,7 +1648,9 @@ elif menu == "Risk Register":
         "Risk level", ["Critical", "High", "Medium", "Low"],
         default=["Critical", "High", "Medium", "Low"],
     )
-    view = register[register["Risk"].isin(selected)].sort_values("Score", ascending=False)
+    view = register[register["Residual Risk"].isin(selected)].sort_values(
+        ["Risk Rank", "Findings"], ascending=False
+    ).drop(columns=["Risk Rank"])
     st.dataframe(view, use_container_width=True, hide_index=True)
     st.download_button(
         "Export Risk Register", view.to_csv(index=False).encode("utf-8"),
@@ -1360,7 +1681,9 @@ elif menu == "Findings & Remediation":
             rows.append({
                 "Finding ID": f"F-{finding_id:03d}", "Vendor": f["vendor_name"],
                 "Severity": f["severity"], "Type": f["finding_type"],
-                "Description": f["description"], "Status": "Open", "Owner": "TPRM",
+                "Domain": f["domain"], "Description": f["description"],
+                "Rationale": f["rationale"], "Status": "Open",
+                "Owner": "Relationship Owner — First Line",
             })
             finding_id += 1
 
@@ -1607,6 +1930,7 @@ elif menu == "Assessment Simulation":
     selected_name = st.selectbox("Choose a case", vendors["name"].tolist())
     vendor = vendors[vendors["name"] == selected_name]
     v = vendor.iloc[0]
+    case_model = risk_engine(vendor, documents, subcontractors, requirements)
 
     st.markdown(
         f"""
@@ -1615,7 +1939,8 @@ elif menu == "Assessment Simulation":
             <b>Vendor:</b> {v["name"]}<br>
             <b>Service:</b> {v["service_type"]}<br>
             <b>Data accessed:</b> {v["data_accessed"]}<br>
-            <b>Criticality:</b> {v["criticality"]}<br>
+            <b>Criticality:</b> {case_model["criticality_tier"]}<br>
+            <b>Assessment status:</b> {case_model["assessment_quality"]}<br>
             <b>Status:</b> {v["status"]}<br>
             <b>Contract end:</b> {v["contract_end_date"]}
         </div>
@@ -1640,7 +1965,7 @@ elif menu == "Assessment Simulation":
     )
 
     if st.button("Submit Assessment", type="primary"):
-        model = risk_engine(vendor, documents, subcontractors, requirements)
+        model = case_model
         actual_risk = model["level"]
         actual_fourth = "Yes" if model["hidden_subcontractors"] > 0 else "No"
 
@@ -1651,7 +1976,7 @@ elif menu == "Assessment Simulation":
             expected_evidence.add("Expired documents")
         if model["compliance"]["pending"]:
             expected_evidence.add("Pending documents")
-        if model["contract_days"] is not None and model["contract_days"] <= 90:
+        if model["contract_days"] is not None and model["contract_days"] < 0:
             expected_evidence.add("Contract expiry")
         if model["hidden_subcontractors"]:
             expected_evidence.add("Undisclosed subcontractors")
@@ -1681,17 +2006,22 @@ elif menu == "Assessment Simulation":
         st.markdown(
             f"""
             <div class="score-box">
-                <div class="metric-label">Model Risk Score</div>
-                <div class="score-number">{model["score"]}/100</div>
+                <div class="metric-label">Model Assessment</div>
+                <div class="score-number" style="font-size:1.55rem;">{model["level"]}</div>
+                <div style="color:#b7c0d6;margin-top:.45rem;">
+                    {model["criticality_tier"]} · Inherent {model["inherent_level"]} ·
+                    Controls {model["control_effectiveness"]}
+                </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
         st.write("")
-        st.write("**Risk drivers:**")
-        for name, value, maximum in model["drivers"]:
-            st.write(f"- {name}: {value}/{maximum}")
+        st.write("**Transparent inherent-risk calculation:**")
+        for name, value, maximum, source in model["drivers"]:
+            st.write(f"- {name}: {value}/{maximum} — {source}")
+        st.write(f'**Total:** {model["inherent_score"]}/15 — {model["inherent_level"]}')
 
         st.info(
             "This is a training model, not a production risk methodology. "
