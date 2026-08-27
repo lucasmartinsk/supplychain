@@ -1,6 +1,3 @@
-
-
-
 import base64
 import io
 import sqlite3
@@ -28,6 +25,31 @@ REQUIRED_SHEETS = {
     "subcontractors",
     "document_requirements",
     "findings",
+}
+
+IAM_USERS = [
+    (1, "Alex Morgan", "admin@grclab.local", "Technology Risk", "IAM Administrator", "GRC-Lab-Admins", "Global Administrator", "Active", "Required"),
+    (2, "Jordan Lee", "analyst@grclab.local", "Third-Party Risk", "TPRM Analyst", "GRC-TPRM-Analysts", "TPRM Analyst", "Active", "Required"),
+    (3, "Lucas Martins", "oversight@grclab.local", "Independent Risk", "Technology Risk Oversight", "GRC-Risk-Oversight", "Risk Oversight (2LoD)", "Active", "Required"),
+    (4, "Taylor Reed", "owner@grclab.local", "Business Ownership", "ICT Risk Owner", "GRC-Risk-Owners", "Risk Owner", "Active", "Required"),
+    (5, "Casey Novak", "auditor@grclab.local", "Internal Audit", "Technology Auditor", "GRC-Audit-Readers", "Auditor / Read Only", "Active", "Required"),
+]
+
+ROLE_PERMISSIONS = {
+    "Global Administrator": {"*"},
+    "TPRM Analyst": {"dashboard.read", "vendor.read", "assessment.write", "evidence.write", "finding.write", "training.use", "iam.read"},
+    "Risk Oversight (2LoD)": {"dashboard.read", "vendor.read", "assessment.write", "override.write", "finding.challenge", "training.use", "iam.read", "audit.read"},
+    "Risk Owner": {"dashboard.read", "vendor.read", "risk.accept", "training.use", "iam.read"},
+    "Auditor / Read Only": {"dashboard.read", "vendor.read", "iam.read", "audit.read"},
+}
+
+PAGE_PERMISSIONS = {
+    "Executive Dashboard": "dashboard.read", "Vendor Portfolio": "vendor.read",
+    "Risk Register": "vendor.read", "Findings & Remediation": "vendor.read",
+    "Fourth-Party Risk": "vendor.read", "Document Compliance": "vendor.read",
+    "Sample Document Library": "vendor.read", "Assessment Simulation": "training.use",
+    "IT Risk / GRC Practice Lab": "training.use", "Data Import": "admin.data",
+    "Identity & Access": "iam.read",
 }
 
 
@@ -334,6 +356,101 @@ def ensure_vendor_assessments_table():
             )
             """
         )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ensure_iam_tables():
+    """Creates a small Entra-inspired identity layer for training only."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS iam_users (
+                user_id INTEGER PRIMARY KEY, display_name TEXT, upn TEXT UNIQUE,
+                department TEXT, job_title TEXT, group_name TEXT, app_role TEXT,
+                status TEXT, mfa TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS iam_audit_log (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT, event_time TEXT,
+                actor_upn TEXT, action TEXT, target TEXT, outcome TEXT, details TEXT
+            )
+            """
+        )
+        for user in IAM_USERS:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO iam_users
+                    (user_id, display_name, upn, department, job_title, group_name, app_role, status, mfa)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                user,
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def iam_users():
+    conn = get_connection()
+    try:
+        return pd.read_sql_query("SELECT * FROM iam_users ORDER BY user_id", conn)
+    finally:
+        conn.close()
+
+
+def active_identity():
+    upn = st.session_state.get("iam_active_upn")
+    if not upn:
+        return None
+    users = iam_users()
+    match = users[(users["upn"] == upn) & (users["status"] == "Active")]
+    return None if match.empty else match.iloc[0].to_dict()
+
+
+def has_permission(permission):
+    identity = active_identity()
+    if not identity:
+        return False
+    granted = ROLE_PERMISSIONS.get(identity["app_role"], set())
+    return "*" in granted or permission in granted
+
+
+def audit_event(action, target="Application", outcome="Success", details=""):
+    identity = active_identity()
+    actor = identity["upn"] if identity else "anonymous"
+    conn = get_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO iam_audit_log
+                (event_time, actor_upn, action, target, outcome, details)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), actor, action, str(target), outcome, str(details)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def audit_log():
+    conn = get_connection()
+    try:
+        return pd.read_sql_query("SELECT * FROM iam_audit_log ORDER BY event_id DESC", conn)
+    finally:
+        conn.close()
+
+
+def update_identity_status(user_id, status):
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE iam_users SET status=? WHERE user_id=?", (status, int(user_id)))
         conn.commit()
     finally:
         conn.close()
@@ -972,7 +1089,9 @@ def control_effectiveness(findings):
     )
     if "Critical" in severities or systemic_high:
         return "Ineffective"
-    if high_count == 1 or medium_count >= 3:
+    # One or more High findings must never produce a more favourable result
+    # than a single High finding. This also fixes cumulative High scenarios.
+    if high_count >= 1 or medium_count >= 3:
         return "Partially Effective"
     if severities:
         return "Mostly Effective"
@@ -1101,12 +1220,46 @@ def generate_findings(vendor, documents, subcontractors, requirements):
 
 ensure_document_files_table()
 ensure_vendor_assessments_table()
+ensure_iam_tables()
 
 vendors = load_data("vendors")
 documents = load_data("documents")
 subcontractors = load_data("subcontractors")
 requirements = load_data("document_requirements")
 findings_db = load_data("findings")
+
+
+# ============================================================
+# SIMULATED SIGN-IN — MICROSOFT ENTRA-INSPIRED TRAINING FLOW
+# ============================================================
+
+if not active_identity():
+    page_header(
+        "Identity boundary",
+        "Sign in to the GRC Lab",
+        "Choose a fictional workforce identity to test role-based access and segregation of duties.",
+    )
+    st.warning(
+        "Training simulation only. This is not Microsoft Entra ID and must not be used as production authentication."
+    )
+    login_users = iam_users()
+    active_users = login_users[login_users["status"] == "Active"].copy()
+    selected_upn = st.selectbox(
+        "Work account",
+        active_users["upn"].tolist(),
+        index=(active_users["upn"].tolist().index("oversight@grclab.local")
+               if "oversight@grclab.local" in active_users["upn"].tolist() else 0),
+    )
+    selected_identity = active_users[active_users["upn"] == selected_upn].iloc[0]
+    st.caption(
+        f'{selected_identity["display_name"]} · {selected_identity["app_role"]} · '
+        f'Group: {selected_identity["group_name"]} · MFA: {selected_identity["mfa"]}'
+    )
+    if st.button("Sign in (simulation)", type="primary", use_container_width=True):
+        st.session_state["iam_active_upn"] = selected_upn
+        audit_event("Sign-in", selected_upn, details="Simulated MFA requirement satisfied")
+        st.rerun()
+    st.stop()
 
 
 # ============================================================
@@ -1126,20 +1279,35 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
+identity = active_identity()
+st.sidebar.markdown(
+    f"""
+    <div style="padding:.75rem;border:1px solid #293653;border-radius:6px;margin-bottom:1rem;">
+        <div style="font-size:.63rem;color:#8a96b3;font-weight:800;letter-spacing:.08em;">SIGNED IN</div>
+        <div style="font-weight:700;margin-top:.2rem;">{identity['display_name']}</div>
+        <div style="font-size:.7rem;color:#a9b5ce;">{identity['app_role']}</div>
+        <div style="font-size:.65rem;color:#8a96b3;margin-top:.2rem;">MFA · {identity['mfa']}</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+if st.sidebar.button("Sign out", use_container_width=True):
+    audit_event("Sign-out", identity["upn"])
+    st.session_state.pop("iam_active_upn", None)
+    st.rerun()
+
+all_pages = [
+    "Executive Dashboard", "Vendor Portfolio", "Risk Register",
+    "Findings & Remediation", "Fourth-Party Risk", "Document Compliance",
+    "Sample Document Library", "Assessment Simulation",
+    "IT Risk / GRC Practice Lab", "Data Import", "Identity & Access",
+]
+available_pages = [page for page in all_pages if has_permission(PAGE_PERMISSIONS[page])]
+
 menu = st.sidebar.radio(
     "WORKSPACE",
-    [
-        "Executive Dashboard",
-        "Vendor Portfolio",
-        "Risk Register",
-        "Findings & Remediation",
-        "Fourth-Party Risk",
-        "Document Compliance",
-        "Sample Document Library",
-        "Assessment Simulation",
-        "IT Risk / GRC Practice Lab",
-        "Data Import",
-    ],
+    available_pages,
 )
 
 st.sidebar.markdown(
@@ -1419,6 +1587,12 @@ elif menu == "Vendor Portfolio":
                 "the rating is clearly marked as provisional."
             )
             saved = assessment_row(v["vendor_id"])
+            can_assess = has_permission("assessment.write")
+            can_override = has_permission("override.write")
+            if not can_assess:
+                st.info("Your current app role has read-only access to assessment inputs.")
+            elif not can_override:
+                st.caption("Segregation of duties: model inputs may be updated, but a final rating override requires Risk Oversight.")
             score_options = [None, 0, 1, 2, 3]
             score_labels = {
                 None: "Review Required", 0: "0 — None / negligible",
@@ -1438,6 +1612,7 @@ elif menu == "Vendor Portfolio":
                         criticality_values[field] = st.selectbox(
                             FIELD_LABELS[field], score_options, index=saved_index(field),
                             format_func=lambda value: score_labels[value], key=f"{field}_{v['vendor_id']}",
+                            disabled=not can_assess,
                         )
 
                 st.markdown("**Inherent-risk factors**")
@@ -1448,23 +1623,30 @@ elif menu == "Vendor Portfolio":
                         inherent_values[field] = st.selectbox(
                             FIELD_LABELS[field], score_options, index=saved_index(field),
                             format_func=lambda value: score_labels[value], key=f"{field}_{v['vendor_id']}",
+                            disabled=not can_assess,
                         )
 
                 st.markdown("**Human override — optional**")
                 override_options = ["No override", "Low", "Medium", "High", "Critical"]
                 current_override = str(saved.get("override_rating", "") or "")
                 override_default = override_options.index(current_override) if current_override in override_options else 0
-                override_rating = st.selectbox("Final rating override", override_options, index=override_default)
+                override_rating = st.selectbox(
+                    "Final rating override", override_options, index=override_default,
+                    disabled=not can_override,
+                )
                 override_reason = st.text_area(
                     "Override reason", value=str(saved.get("override_reason", "") or ""),
-                    placeholder="Required when an override is selected.",
+                    placeholder="Required when an override is selected.", disabled=not can_override,
                 )
                 override_review_date = st.text_input(
                     "Override review date", value=str(saved.get("override_review_date", "") or ""),
-                    placeholder="YYYY-MM-DD",
+                    placeholder="YYYY-MM-DD", disabled=not can_override,
                 )
 
-                if st.form_submit_button("Save Assessment", type="primary", use_container_width=True):
+                if st.form_submit_button(
+                    "Save Assessment", type="primary", use_container_width=True,
+                    disabled=not (can_assess or can_override),
+                ):
                     if override_rating != "No override" and not override_reason.strip():
                         st.error("Document the reason before applying a human override.")
                     else:
@@ -1474,6 +1656,10 @@ elif menu == "Vendor Portfolio":
                             "override_reason": override_reason.strip(),
                             "override_review_date": override_review_date.strip(),
                         })
+                        audit_event(
+                            "Assessment updated", v["name"],
+                            details=("Human override included" if override_rating != "No override" else "Factor inputs updated"),
+                        )
                         st.success("Assessment saved.")
                         st.rerun()
 
@@ -3139,6 +3325,107 @@ elif menu == "IT Risk / GRC Practice Lab":
 
 
 # ============================================================
+# IDENTITY & ACCESS
+# ============================================================
+
+elif menu == "Identity & Access":
+
+    page_header(
+        "Microsoft Entra-inspired simulation",
+        "Identity & Access Governance",
+        "Explore workforce identities, group-based assignment, app roles, MFA posture and auditable access events.",
+    )
+
+    st.warning(
+        "Lab simulation only: these controls reproduce IAM concepts and decision flows, not Microsoft authentication or production security."
+    )
+
+    current_permissions = ROLE_PERMISSIONS.get(identity["app_role"], set())
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Workforce identities", len(iam_users()))
+    col2.metric("Active identities", int((iam_users()["status"] == "Active").sum()))
+    col3.metric("MFA coverage", f'{int((iam_users()["mfa"] == "Required").mean() * 100)}%')
+    col4.metric("Your app role", identity["app_role"])
+
+    tabs = st.tabs(["Users & groups", "Access matrix", "Audit log", "Control model"])
+
+    with tabs[0]:
+        users_view = iam_users()[[
+            "display_name", "upn", "department", "job_title", "group_name",
+            "app_role", "status", "mfa",
+        ]]
+        st.dataframe(users_view, use_container_width=True, hide_index=True)
+        if has_permission("admin.data"):
+            st.markdown("#### Identity lifecycle administration")
+            managed_users = iam_users()
+            target_upn = st.selectbox("Identity", managed_users["upn"].tolist(), key="iam_target")
+            target = managed_users[managed_users["upn"] == target_upn].iloc[0]
+            new_status = st.selectbox(
+                "Account status", ["Active", "Disabled"],
+                index=0 if target["status"] == "Active" else 1,
+            )
+            if st.button("Apply account status", type="primary"):
+                if target_upn == identity["upn"] and new_status == "Disabled":
+                    st.error("Self-deactivation is blocked in the lab to prevent administrator lockout.")
+                    audit_event("Identity status change", target_upn, "Blocked", "Self-deactivation prevented")
+                else:
+                    update_identity_status(target["user_id"], new_status)
+                    audit_event("Identity status change", target_upn, details=f"Status set to {new_status}")
+                    st.success(f"{target_upn} is now {new_status}.")
+                    st.rerun()
+        else:
+            st.caption("User lifecycle changes require the Global Administrator role.")
+
+    with tabs[1]:
+        permission_labels = [
+            ("View dashboards", "dashboard.read"), ("View vendor risk", "vendor.read"),
+            ("Update assessment inputs", "assessment.write"), ("Apply human override", "override.write"),
+            ("Attach evidence", "evidence.write"), ("Manage findings", "finding.write"),
+            ("Challenge findings", "finding.challenge"), ("Accept residual risk", "risk.accept"),
+            ("Import datasets", "admin.data"), ("View audit trail", "audit.read"),
+        ]
+        matrix = []
+        for role, permissions in ROLE_PERMISSIONS.items():
+            row = {"App role": role}
+            for label, permission in permission_labels:
+                row[label] = "Allowed" if "*" in permissions or permission in permissions else "Denied"
+            matrix.append(row)
+        st.dataframe(pd.DataFrame(matrix), use_container_width=True, hide_index=True)
+        st.caption(
+            "Segregation example: analysts can assess and collect evidence; Risk Oversight can challenge and override; "
+            "Risk Owners accept residual risk; auditors remain read-only."
+        )
+
+    with tabs[2]:
+        if has_permission("audit.read") or has_permission("admin.data"):
+            events = audit_log()
+            if events.empty:
+                st.info("No access events recorded yet.")
+            else:
+                st.dataframe(events, use_container_width=True, hide_index=True)
+        else:
+            st.info("Audit events are restricted to Risk Oversight, Internal Audit and administrators.")
+
+    with tabs[3]:
+        st.markdown(
+            """
+            **How the simulation maps to enterprise IAM**
+
+            - **Work account / UPN:** fictional workforce identity.
+            - **Security group:** represents group-based access assignment.
+            - **App role:** determines what the identity can do inside this application.
+            - **MFA requirement:** conditional-access concept represented as a sign-in control.
+            - **Least privilege:** users receive only the access needed for their responsibility.
+            - **Segregation of duties:** assessment, independent challenge, risk acceptance and administration are separated.
+            - **Audit trail:** material sign-ins and changes record actor, target, outcome and time.
+
+            A production bank would connect the application to its identity provider, use strong authentication,
+            privileged identity management, access reviews, joiner-mover-leaver workflows and central security monitoring.
+            """
+        )
+
+
+# ============================================================
 # DATA IMPORT
 # ============================================================
 
@@ -3196,6 +3483,10 @@ elif menu == "Data Import":
                     save_table(sheets[name], name)
                 if "findings" in sheets:
                     save_table(sheets["findings"], "findings")
+                audit_event(
+                    "Dataset imported", uploaded.name,
+                    details=f'{len(sheets["vendors"])} vendors committed to the lab database',
+                )
                 st.success("Dataset imported successfully.")
 
         except Exception as exc:
