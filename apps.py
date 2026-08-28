@@ -68,6 +68,65 @@ st.set_page_config(
 
 
 # ============================================================
+# MICROSOFT ENTRA ID AUTHENTICATION
+# OIDC credentials live in Streamlit Secrets under [auth].
+# No client secret is stored in this source file.
+# ============================================================
+
+def require_microsoft_login():
+    """Block the workspace until a Microsoft Entra ID session is authenticated."""
+    if st.user.is_logged_in:
+        return
+
+    st.markdown(
+        """
+        <style>
+        section[data-testid="stSidebar"] { display:none; }
+        [data-testid="stHeader"] { background:transparent; }
+        .stApp { background:#f4f6fa; }
+        .block-container { max-width:760px; padding-top:11vh; }
+        .entra-shell {
+            background:#ffffff; border:1px solid #dce2ec; border-radius:10px;
+            padding:2.25rem 2.4rem 1.85rem;
+            box-shadow:0 12px 34px rgba(15,23,42,.08);
+        }
+        .entra-kicker {
+            color:#8a5b08; font-size:.7rem; font-weight:800;
+            letter-spacing:.14em; text-transform:uppercase;
+        }
+        .entra-title {
+            color:#0f1729; font-size:2rem; line-height:1.15; font-weight:800;
+            letter-spacing:-.03em; margin:.45rem 0 .7rem;
+        }
+        .entra-copy { color:#5b6478; font-size:.94rem; line-height:1.65; }
+        .entra-meta {
+            color:#7c8598; font-size:.74rem; margin-top:1.25rem;
+            padding-top:1rem; border-top:1px solid #edf0f5;
+        }
+        div.stButton > button { min-height:2.8rem; font-weight:700; }
+        </style>
+        <div class="entra-shell">
+            <div class="entra-kicker">Secure workspace</div>
+            <div class="entra-title">TPRM Risk Lab</div>
+            <div class="entra-copy">
+                Sign in with your Microsoft organizational account to access the
+                Technology Risk, Cyber GRC and Third-Party Risk workspace.
+            </div>
+            <div class="entra-meta">Authentication provided through Microsoft Entra ID.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.write("")
+    if st.button("Sign in with Microsoft", type="primary", use_container_width=True):
+        st.login()
+    st.stop()
+
+
+require_microsoft_login()
+
+
+# ============================================================
 # DESIGN SYSTEM - "SIGNAL ROOM"
 # Dark analyst-console theme. Monospace for data/numbers,
 # sans-serif for prose. Sharp corners, restrained accent color,
@@ -1259,36 +1318,20 @@ findings_db = load_data("findings")
 
 
 # ============================================================
-# SIMULATED SIGN-IN — MICROSOFT ENTRA-INSPIRED TRAINING FLOW
+# INTERNAL LAB ROLE CONTEXT
+# Authentication is handled by Microsoft Entra ID above.
+# The local role below is retained only to drive the training
+# RBAC/segregation-of-duties scenarios inside the lab.
 # ============================================================
 
 if not active_identity():
-    page_header(
-        "Identity boundary",
-        "Sign in to the GRC Lab",
-        "Choose a fictional workforce identity to test role-based access and segregation of duties.",
+    st.session_state["iam_active_upn"] = "oversight@grclab.local"
+    entra_email = getattr(st.user, "email", None) or getattr(st.user, "preferred_username", None) or "authenticated-user"
+    audit_event(
+        "Entra sign-in",
+        "TPRM Risk Lab",
+        details=f"Microsoft Entra authenticated session established for {entra_email}; lab role context initialized.",
     )
-    st.warning(
-        "Training simulation only. This is not Microsoft Entra ID and must not be used as production authentication."
-    )
-    login_users = iam_users()
-    active_users = login_users[login_users["status"] == "Active"].copy()
-    selected_upn = st.selectbox(
-        "Work account",
-        active_users["upn"].tolist(),
-        index=(active_users["upn"].tolist().index("oversight@grclab.local")
-               if "oversight@grclab.local" in active_users["upn"].tolist() else 0),
-    )
-    selected_identity = active_users[active_users["upn"] == selected_upn].iloc[0]
-    st.caption(
-        f'{selected_identity["display_name"]} · {selected_identity["app_role"]} · '
-        f'Group: {selected_identity["group_name"]} · MFA: {selected_identity["mfa"]}'
-    )
-    if st.button("Sign in (simulation)", type="primary", use_container_width=True):
-        st.session_state["iam_active_upn"] = selected_upn
-        audit_event("Sign-in", selected_upn, details="Simulated MFA requirement satisfied")
-        st.rerun()
-    st.stop()
 
 
 # ============================================================
@@ -1309,22 +1352,25 @@ st.sidebar.markdown(
 )
 
 identity = active_identity()
+entra_name = getattr(st.user, "name", None) or getattr(st.user, "email", None) or "Authenticated user"
+entra_email = getattr(st.user, "email", None) or getattr(st.user, "preferred_username", None) or ""
 st.sidebar.markdown(
     f"""
     <div style="padding:.75rem;border:1px solid #293653;border-radius:6px;margin-bottom:1rem;">
-        <div style="font-size:.63rem;color:#8a96b3;font-weight:800;letter-spacing:.08em;">SIGNED IN</div>
-        <div style="font-weight:700;margin-top:.2rem;">{identity['display_name']}</div>
+        <div style="font-size:.63rem;color:#8a96b3;font-weight:800;letter-spacing:.08em;">MICROSOFT ENTRA ID</div>
+        <div style="font-weight:700;margin-top:.2rem;">{entra_name}</div>
+        {f'<div style="font-size:.68rem;color:#a9b5ce;margin-top:.1rem;">{entra_email}</div>' if entra_email and entra_email != entra_name else ''}
+        <div style="font-size:.63rem;color:#8a96b3;font-weight:800;letter-spacing:.08em;margin-top:.65rem;">LAB ROLE</div>
         <div style="font-size:.7rem;color:#a9b5ce;">{identity['app_role']}</div>
-        <div style="font-size:.65rem;color:#8a96b3;margin-top:.2rem;">MFA · {identity['mfa']}</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
 if st.sidebar.button("Sign out", use_container_width=True):
-    audit_event("Sign-out", identity["upn"])
+    audit_event("Entra sign-out", "TPRM Risk Lab")
     st.session_state.pop("iam_active_upn", None)
-    st.rerun()
+    st.logout()
 
 all_pages = [
     "Executive Dashboard", "Vendor Portfolio", "Risk Register",
