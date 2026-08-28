@@ -1311,17 +1311,18 @@ email_html = (
     else ""
 )
 
-st.sidebar.markdown(
-    f"""
-    <div class="entra-user-card">
-        <div class="entra-user-kicker">MICROSOFT ENTRA ID</div>
-        <div class="entra-user-name">{entra_name}</div>
-        {email_html}
-        <div class="entra-user-status">Authenticated</div>
-    </div>
-    """,
-    unsafe_allow_html=True,
+# Keep the HTML on one logical line. When email_html is empty, an indented
+# multiline Markdown block can be interpreted as a code block by Streamlit.
+identity_card_html = (
+    f'<div class="entra-user-card">'
+    f'<div class="entra-user-kicker">MICROSOFT ENTRA ID</div>'
+    f'<div class="entra-user-name">{entra_name}</div>'
+    f'{email_html}'
+    f'<div class="entra-user-status">Authenticated</div>'
+    f'</div>'
 )
+
+st.sidebar.markdown(identity_card_html, unsafe_allow_html=True)
 
 if st.sidebar.button("Sign out", use_container_width=True, key="entra_signout"):
     st.logout()
