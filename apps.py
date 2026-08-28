@@ -368,6 +368,7 @@ st.markdown(
 
 # ============================================================
 # DATABASE - PERSISTENT POSTGRESQL (SUPABASE)
+# Query cache + selective invalidation reduce remote DB round trips
 # ============================================================
 
 @st.cache_resource
@@ -401,7 +402,10 @@ def get_engine():
     return create_engine(
         url,
         pool_pre_ping=True,
-        pool_recycle=300,
+        pool_recycle=900,
+        pool_size=5,
+        max_overflow=5,
+        pool_timeout=10,
         connect_args={"sslmode": "require", "connect_timeout": 10},
     )
 
@@ -410,6 +414,7 @@ def table_exists(table_name):
     return inspect(get_engine()).has_table(table_name)
 
 
+@st.cache_resource
 def ensure_document_files_table():
     with get_engine().begin() as conn:
         conn.execute(text("""
@@ -425,6 +430,7 @@ def ensure_document_files_table():
         """))
 
 
+@st.cache_resource
 def ensure_vendor_assessments_table():
     """Stores explainable, vendor-level inputs without changing the source workbook."""
     with get_engine().begin() as conn:
@@ -448,6 +454,7 @@ def ensure_vendor_assessments_table():
         """))
 
 
+@st.cache_resource
 def ensure_vendor_case_tables():
     """Persistent case-management state for the end-to-end Vendor Case Workspace."""
     with get_engine().begin() as conn:
@@ -525,7 +532,7 @@ def log_vendor_activity(vendor_id, activity_type, detail, actor):
                 "created_at": _now_label(),
             },
         )
-    load_data.clear()
+    invalidate_data("vendor_activity_log")
 
 
 def save_vendor_case_state(vendor_id, values, actor):
@@ -559,7 +566,7 @@ def save_vendor_case_state(vendor_id, values, actor):
                 updated_by=EXCLUDED.updated_by,
                 updated_at=EXCLUDED.updated_at
         """), payload)
-    load_data.clear()
+    invalidate_data("vendor_case_state")
     log_vendor_activity(
         vendor_id,
         "Risk decision updated",
@@ -583,8 +590,35 @@ def add_vendor_case_note(vendor_id, note_type, note_text, actor):
             "created_by": str(actor or "Authenticated user"),
             "created_at": _now_label(),
         })
-    load_data.clear()
+    invalidate_data("vendor_case_notes")
     log_vendor_activity(vendor_id, f"{note_type} note added", str(note_text).strip()[:180], actor)
+
+
+def delete_vendor_case_note(vendor_id, note_id, actor):
+    """Delete the note content while preserving a deletion event in the audit trail."""
+    ensure_vendor_case_tables()
+    with get_engine().begin() as conn:
+        row = conn.execute(
+            text("""
+                SELECT note_type, note_text, created_by, created_at
+                FROM vendor_case_notes
+                WHERE note_id = :note_id AND vendor_id = :vendor_id
+            """),
+            {"note_id": int(note_id), "vendor_id": int(vendor_id)},
+        ).mappings().first()
+        if not row:
+            return False
+        conn.execute(
+            text("DELETE FROM vendor_case_notes WHERE note_id = :note_id AND vendor_id = :vendor_id"),
+            {"note_id": int(note_id), "vendor_id": int(vendor_id)},
+        )
+    invalidate_data("vendor_case_notes")
+    detail = (
+        f"{row['note_type']} note deleted | Original author: {row['created_by']} | "
+        f"Originally created: {row['created_at']} | Note ID: {int(note_id)}"
+    )
+    log_vendor_activity(vendor_id, "Case note deleted", detail, actor)
+    return True
 
 
 def save_finding_action(vendor_id, finding, values, actor):
@@ -624,7 +658,7 @@ def save_finding_action(vendor_id, finding, values, actor):
                 updated_by=EXCLUDED.updated_by,
                 updated_at=EXCLUDED.updated_at
         """), payload)
-    load_data.clear()
+    invalidate_data("vendor_finding_actions")
     log_vendor_activity(
         vendor_id,
         "Finding remediation updated",
@@ -633,8 +667,8 @@ def save_finding_action(vendor_id, finding, values, actor):
     )
 
 
-@st.cache_data(ttl=30)
-def load_data(table_name):
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_data_cached(table_name, revision):
     allowed = {
         "vendors", "documents", "subcontractors",
         "document_requirements", "findings", "document_files",
@@ -643,9 +677,43 @@ def load_data(table_name):
     }
     if table_name not in allowed or not table_exists(table_name):
         return pd.DataFrame()
-
     with get_engine().connect() as conn:
         return pd.read_sql_query(text(f'SELECT * FROM "{table_name}"'), conn)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_vendor_rows_cached(table_name, vendor_id, revision):
+    allowed = {
+        "vendor_assessments", "vendor_case_state", "vendor_case_notes",
+        "vendor_finding_actions", "vendor_activity_log",
+    }
+    if table_name not in allowed or not table_exists(table_name):
+        return pd.DataFrame()
+    with get_engine().connect() as conn:
+        return pd.read_sql_query(
+            text(f'SELECT * FROM "{table_name}" WHERE vendor_id = :vendor_id'),
+            conn,
+            params={"vendor_id": int(vendor_id)},
+        )
+
+
+def _data_revision(table_name):
+    return int(st.session_state.get(f"_db_rev_{table_name}", 0))
+
+
+def invalidate_data(*table_names):
+    """Invalidate only the tables that changed instead of flushing every cached query."""
+    for table_name in table_names:
+        key = f"_db_rev_{table_name}"
+        st.session_state[key] = int(st.session_state.get(key, 0)) + 1
+
+
+def load_data(table_name):
+    return _load_data_cached(table_name, _data_revision(table_name))
+
+
+def load_vendor_rows(table_name, vendor_id):
+    return _load_vendor_rows_cached(table_name, int(vendor_id), _data_revision(table_name))
 
 
 def save_table(df, table_name, connection=None):
@@ -658,7 +726,7 @@ def save_table(df, table_name, connection=None):
 
     target = connection if connection is not None else get_engine()
     df.to_sql(table_name, target, if_exists="replace", index=False, method="multi")
-    load_data.clear()
+    invalidate_data(table_name)
 
 
 def save_dataset_tables(sheets):
@@ -670,9 +738,10 @@ def save_dataset_tables(sheets):
             save_table(sheets["findings"], "findings", connection=conn)
         elif table_exists("findings"):
             conn.execute(text('DROP TABLE IF EXISTS "findings"'))
-    load_data.clear()
+    invalidate_data("vendors", "documents", "subcontractors", "document_requirements", "findings")
 
 
+@st.cache_resource
 def restore_default_dataset_if_needed():
     """Seed PostgreSQL only when no persistent vendor dataset exists yet.
 
@@ -728,7 +797,7 @@ def save_document_file(vendor_id, doc_type, filename, content_type, file_bytes):
                 "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
             },
         )
-    load_data.clear()
+    invalidate_data("document_files")
 
 
 def save_vendor_assessment(vendor_id, values):
@@ -759,20 +828,29 @@ def save_vendor_assessment(vendor_id, values):
             """),
             payload,
         )
-    load_data.clear()
+    invalidate_data("vendor_assessments")
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _get_document_file_cached(vendor_id, doc_type, revision):
+    ensure_document_files_table()
+    with get_engine().connect() as conn:
+        df = pd.read_sql_query(
+            text("""
+                SELECT * FROM document_files
+                WHERE vendor_id = :vendor_id AND LOWER(doc_type) = LOWER(:doc_type)
+                ORDER BY file_id DESC
+                LIMIT 1
+            """),
+            conn,
+            params={"vendor_id": int(vendor_id), "doc_type": str(doc_type)},
+        )
+    return None if df.empty else df.iloc[0]
+
 
 def get_document_file(vendor_id, doc_type):
-    ensure_document_files_table()
-    df = load_data("document_files")
-    if df.empty:
-        return None
-    match = df[
-        (df["vendor_id"] == vendor_id)
-        & (df["doc_type"].astype(str).str.lower() == str(doc_type).lower())
-    ]
-    if match.empty:
-        return None
-    return match.iloc[-1]  # most recently attached
+    return _get_document_file_cached(
+        int(vendor_id), str(doc_type), _data_revision("document_files")
+    )
 
 
 def render_file_preview(row, height=420):
@@ -1155,11 +1233,8 @@ FIELD_LABELS = {
 
 
 def assessment_row(vendor_id):
-    rows = load_data("vendor_assessments")
-    if rows.empty:
-        return {}
-    match = rows[rows["vendor_id"] == vendor_id]
-    return {} if match.empty else match.iloc[-1].to_dict()
+    rows = load_vendor_rows("vendor_assessments", vendor_id)
+    return {} if rows.empty else rows.iloc[-1].to_dict()
 
 
 def valid_assessment_value(value):
@@ -2087,14 +2162,12 @@ elif menu == "Vendor Case Workspace":
     risk = risk_engine(vendor, documents, subcontractors, requirements)
     generated_findings = generate_findings(vendor, documents, subcontractors, requirements)
 
-    case_states = load_data("vendor_case_state")
-    state_match = case_states[case_states["vendor_id"] == vendor_id] if not case_states.empty else pd.DataFrame()
-    case_state = state_match.iloc[-1].to_dict() if not state_match.empty else {}
+    case_states = load_vendor_rows("vendor_case_state", vendor_id)
+    case_state = case_states.iloc[-1].to_dict() if not case_states.empty else {}
     case_status = str(case_state.get("case_status", "In Review") or "In Review")
     risk_decision = str(case_state.get("risk_decision", "Further review") or "Further review")
 
-    finding_actions = load_data("vendor_finding_actions")
-    vendor_actions = finding_actions[finding_actions["vendor_id"] == vendor_id].copy() if not finding_actions.empty else pd.DataFrame()
+    vendor_actions = load_vendor_rows("vendor_finding_actions", vendor_id).copy()
     tracked_open = 0
     if not vendor_actions.empty and "status" in vendor_actions.columns:
         tracked_open = int((~vendor_actions["status"].astype(str).isin(["Closed", "Accepted"])).sum())
@@ -2152,6 +2225,7 @@ elif menu == "Vendor Case Workspace":
                         st.rerun()
                     else:
                         st.warning("Write a note before saving.")
+            st.caption("Saved notes can be reviewed or deleted from Activity -> Manage case notes.")
             st.markdown('</div>', unsafe_allow_html=True)
 
         with right:
@@ -2310,13 +2384,44 @@ elif menu == "Vendor Case Workspace":
 
     with tabs[6]:
         st.subheader("Activity & audit trail")
-        activity = load_data("vendor_activity_log")
-        vendor_activity = activity[activity["vendor_id"] == vendor_id].copy() if not activity.empty else pd.DataFrame()
-        notes = load_data("vendor_case_notes")
-        vendor_notes = notes[notes["vendor_id"] == vendor_id].copy() if not notes.empty else pd.DataFrame()
+        vendor_activity = load_vendor_rows("vendor_activity_log", vendor_id).copy()
+        vendor_notes = load_vendor_rows("vendor_case_notes", vendor_id).copy()
         a1, a2 = st.columns(2)
         a1.metric("Recorded activities", len(vendor_activity))
         a2.metric("Case notes", len(vendor_notes))
+
+        if not vendor_notes.empty:
+            with st.expander("Manage case notes", expanded=False):
+                st.caption("Notes are persistent. Deleting a note removes its content but keeps a deletion event in the audit trail.")
+                notes_view = vendor_notes.sort_values("note_id", ascending=False)
+                for _, note in notes_view.iterrows():
+                    note_id = int(note["note_id"])
+                    st.markdown(
+                        f'''<div class="section-card" style="padding:.75rem 1rem;margin-bottom:.35rem;">
+                        <div class="section-title" style="margin-bottom:.2rem;">{note.get("note_type", "Case note")}</div>
+                        <div style="font-size:.85rem;">{note.get("note_text", "")}</div>
+                        <div style="font-size:.72rem;color:#687086;margin-top:.35rem;">{note.get("created_at", "")} - {note.get("created_by", "Authenticated user")}</div>
+                        </div>''',
+                        unsafe_allow_html=True,
+                    )
+                    confirm_key = f"confirm_delete_note_{vendor_id}"
+                    if st.session_state.get(confirm_key) == note_id:
+                        st.warning("Delete this note? The deletion itself will remain in the audit trail.")
+                        dc1, dc2 = st.columns(2)
+                        if dc1.button("Confirm delete", key=f"confirm_note_{note_id}", type="primary", use_container_width=True):
+                            if delete_vendor_case_note(vendor_id, note_id, actor):
+                                st.session_state.pop(confirm_key, None)
+                                st.success("Case note deleted. Audit event retained.")
+                                st.rerun()
+                        if dc2.button("Cancel", key=f"cancel_note_{note_id}", use_container_width=True):
+                            st.session_state.pop(confirm_key, None)
+                            st.rerun()
+                    else:
+                        if st.button("Delete note", key=f"delete_note_{note_id}"):
+                            st.session_state[confirm_key] = note_id
+                            st.rerun()
+                    st.divider()
+
         if vendor_activity.empty:
             st.info("No recorded case activity yet. Save an assessment, note, remediation item or decision to create the audit trail.")
         else:
