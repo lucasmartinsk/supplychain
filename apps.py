@@ -1,6 +1,5 @@
 import base64
 import io
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 
@@ -10,6 +9,8 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import URL
 
 
 # ============================================================
@@ -18,7 +19,6 @@ from reportlab.pdfgen import canvas
 # Training / Portfolio Project
 # ============================================================
 
-DB_NAME = "tprm_database.db"
 DEFAULT_DATASET_NAME = "TPRM_Risk_Lab_20_Fictional_Vendor_Cases.xlsx"
 
 REQUIRED_SHEETS = {
@@ -28,32 +28,6 @@ REQUIRED_SHEETS = {
     "document_requirements",
     "findings",
 }
-
-IAM_USERS = [
-    (1, "Alex Morgan", "admin@grclab.local", "Technology Risk", "IAM Administrator", "GRC-Lab-Admins", "Global Administrator", "Active", "Required"),
-    (2, "Jordan Lee", "analyst@grclab.local", "Third-Party Risk", "TPRM Analyst", "GRC-TPRM-Analysts", "TPRM Analyst", "Active", "Required"),
-    (3, "Lucas Martins", "oversight@grclab.local", "Independent Risk", "Technology Risk Oversight", "GRC-Risk-Oversight", "Risk Oversight (2LoD)", "Active", "Required"),
-    (4, "Taylor Reed", "owner@grclab.local", "Business Ownership", "ICT Risk Owner", "GRC-Risk-Owners", "Risk Owner", "Active", "Required"),
-    (5, "Casey Novak", "auditor@grclab.local", "Internal Audit", "Technology Auditor", "GRC-Audit-Readers", "Auditor / Read Only", "Active", "Required"),
-]
-
-ROLE_PERMISSIONS = {
-    "Global Administrator": {"*"},
-    "TPRM Analyst": {"dashboard.read", "vendor.read", "assessment.write", "evidence.write", "finding.write", "training.use", "iam.read", "data.import"},
-    "Risk Oversight (2LoD)": {"dashboard.read", "vendor.read", "assessment.write", "override.write", "finding.challenge", "training.use", "iam.read", "audit.read", "data.import"},
-    "Risk Owner": {"dashboard.read", "vendor.read", "risk.accept", "training.use", "iam.read"},
-    "Auditor / Read Only": {"dashboard.read", "vendor.read", "iam.read", "audit.read"},
-}
-
-PAGE_PERMISSIONS = {
-    "Executive Dashboard": "dashboard.read", "Vendor Portfolio": "vendor.read",
-    "Risk Register": "vendor.read", "Findings & Remediation": "vendor.read",
-    "Fourth-Party Risk": "vendor.read", "Document Compliance": "vendor.read",
-    "Sample Document Library": "vendor.read", "Assessment Simulation": "training.use",
-    "IT Risk / GRC Practice Lab": "training.use", "Data Import": "data.import",
-    "Identity & Access": "iam.read",
-}
-
 
 # ============================================================
 # PAGE CONFIG
@@ -356,6 +330,32 @@ st.markdown(
 
     .sidebar-caption { color:#8a96b3; font-size:.68rem; margin-top:1.4rem; line-height:1.55; }
     div[data-testid="stDataFrame"] { border:1px solid #dde2ec; border-radius:6px; overflow:hidden; }
+    .entra-user-card {
+        padding:.78rem .82rem .72rem; border:1px solid #293653; border-radius:6px;
+        margin:.25rem 0 .35rem; background:#111c31;
+    }
+    .entra-user-kicker {
+        font-size:.61rem; color:#8fa5c9; font-weight:800; letter-spacing:.09em;
+    }
+    .entra-user-name {
+        font-weight:750; color:#f6f8fc; margin-top:.24rem; line-height:1.25;
+    }
+    .entra-user-email {
+        font-size:.68rem; color:#aebbd2; margin-top:.18rem; overflow-wrap:anywhere;
+    }
+    .entra-user-status {
+        font-size:.62rem; color:#98a9c5; margin-top:.5rem; padding-top:.45rem;
+        border-top:1px solid #26344f; text-transform:uppercase; letter-spacing:.07em;
+    }
+    section[data-testid="stSidebar"] div.stButton > button {
+        background:#1b2942 !important; color:#f8fafc !important;
+        border:1px solid #40516f !important; border-radius:5px !important;
+        font-weight:750 !important;
+    }
+    section[data-testid="stSidebar"] div.stButton > button:hover {
+        background:#263854 !important; color:#ffffff !important;
+        border-color:#5a6e91 !important;
+    }
     .stButton > button { border-radius:5px; font-weight:700; border-color:#c7cddb; }
     button[kind="primary"] { background:#1d4ed8; border-color:#1d4ed8; color:#ffffff; }
     button[kind="primary"]:hover { background:#1741b8; border-color:#1741b8; color:#ffffff; }
@@ -367,55 +367,70 @@ st.markdown(
 
 
 # ============================================================
-# DATABASE
+# DATABASE - PERSISTENT POSTGRESQL (SUPABASE)
 # ============================================================
 
-def get_connection():
-    return sqlite3.connect(DB_NAME)
+@st.cache_resource
+def get_engine():
+    """Create one pooled PostgreSQL engine from Streamlit Secrets.
+
+    Expected secret section:
+        [connections.tprm_db]
+        host = "..."
+        port = "5432"
+        database = "postgres"
+        username = "postgres"
+        password = "..."
+    """
+    try:
+        cfg = st.secrets["connections"]["tprm_db"]
+    except Exception as exc:
+        raise RuntimeError(
+            "Missing [connections.tprm_db] in Streamlit Secrets."
+        ) from exc
+
+    url = URL.create(
+        drivername="postgresql+psycopg2",
+        username=str(cfg.get("username", "postgres")),
+        password=str(cfg["password"]),
+        host=str(cfg["host"]),
+        port=int(cfg.get("port", 5432)),
+        database=str(cfg.get("database", "postgres")),
+    )
+
+    return create_engine(
+        url,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        connect_args={"sslmode": "require", "connect_timeout": 10},
+    )
 
 
 def table_exists(table_name):
-    conn = get_connection()
-    try:
-        result = pd.read_sql_query(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-            conn,
-            params=(table_name,),
-        )
-        return not result.empty
-    finally:
-        conn.close()
+    return inspect(get_engine()).has_table(table_name)
 
 
 def ensure_document_files_table():
-    conn = get_connection()
-    try:
-        conn.execute(
-            """
+    with get_engine().begin() as conn:
+        conn.execute(text("""
             CREATE TABLE IF NOT EXISTS document_files (
-                file_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                vendor_id INTEGER,
+                file_id BIGSERIAL PRIMARY KEY,
+                vendor_id BIGINT,
                 doc_type TEXT,
                 filename TEXT,
                 content_type TEXT,
                 file_b64 TEXT,
                 uploaded_at TEXT
             )
-            """
-        )
-        conn.commit()
-    finally:
-        conn.close()
+        """))
 
 
 def ensure_vendor_assessments_table():
     """Stores explainable, vendor-level inputs without changing the source workbook."""
-    conn = get_connection()
-    try:
-        conn.execute(
-            """
+    with get_engine().begin() as conn:
+        conn.execute(text("""
             CREATE TABLE IF NOT EXISTS vendor_assessments (
-                vendor_id INTEGER PRIMARY KEY,
+                vendor_id BIGINT PRIMARY KEY,
                 service_interruption INTEGER,
                 customer_impact INTEGER,
                 regulatory_importance INTEGER,
@@ -430,106 +445,7 @@ def ensure_vendor_assessments_table():
                 override_review_date TEXT,
                 updated_at TEXT
             )
-            """
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def ensure_iam_tables():
-    """Creates a small Entra-inspired identity layer for training only."""
-    conn = get_connection()
-    try:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS iam_users (
-                user_id INTEGER PRIMARY KEY, display_name TEXT, upn TEXT UNIQUE,
-                department TEXT, job_title TEXT, group_name TEXT, app_role TEXT,
-                status TEXT, mfa TEXT
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS iam_audit_log (
-                event_id INTEGER PRIMARY KEY AUTOINCREMENT, event_time TEXT,
-                actor_upn TEXT, action TEXT, target TEXT, outcome TEXT, details TEXT
-            )
-            """
-        )
-        for user in IAM_USERS:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO iam_users
-                    (user_id, display_name, upn, department, job_title, group_name, app_role, status, mfa)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                user,
-            )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def iam_users():
-    conn = get_connection()
-    try:
-        return pd.read_sql_query("SELECT * FROM iam_users ORDER BY user_id", conn)
-    finally:
-        conn.close()
-
-
-def active_identity():
-    upn = st.session_state.get("iam_active_upn")
-    if not upn:
-        return None
-    users = iam_users()
-    match = users[(users["upn"] == upn) & (users["status"] == "Active")]
-    return None if match.empty else match.iloc[0].to_dict()
-
-
-def has_permission(permission):
-    identity = active_identity()
-    if not identity:
-        return False
-    granted = ROLE_PERMISSIONS.get(identity["app_role"], set())
-    return "*" in granted or permission in granted
-
-
-def audit_event(action, target="Application", outcome="Success", details=""):
-    identity = active_identity()
-    actor = identity["upn"] if identity else "anonymous"
-    conn = get_connection()
-    try:
-        conn.execute(
-            """
-            INSERT INTO iam_audit_log
-                (event_time, actor_upn, action, target, outcome, details)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), actor, action, str(target), outcome, str(details)),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def audit_log():
-    conn = get_connection()
-    try:
-        return pd.read_sql_query("SELECT * FROM iam_audit_log ORDER BY event_id DESC", conn)
-    finally:
-        conn.close()
-
-
-def update_identity_status(user_id, status):
-    conn = get_connection()
-    try:
-        conn.execute("UPDATE iam_users SET status=? WHERE user_id=?", (status, int(user_id)))
-        conn.commit()
-    finally:
-        conn.close()
+        """))
 
 
 @st.cache_data(ttl=30)
@@ -542,24 +458,41 @@ def load_data(table_name):
     if table_name not in allowed or not table_exists(table_name):
         return pd.DataFrame()
 
-    conn = get_connection()
-    try:
-        return pd.read_sql_query(f'SELECT * FROM "{table_name}"', conn)
-    finally:
-        conn.close()
+    with get_engine().connect() as conn:
+        return pd.read_sql_query(text(f'SELECT * FROM "{table_name}"'), conn)
 
 
-def save_table(df, table_name):
-    conn = get_connection()
-    try:
-        df.to_sql(table_name, conn, if_exists="replace", index=False)
-    finally:
-        conn.close()
+def save_table(df, table_name, connection=None):
+    allowed = {
+        "vendors", "documents", "subcontractors",
+        "document_requirements", "findings",
+    }
+    if table_name not in allowed:
+        raise ValueError(f"Unsupported dataset table: {table_name}")
+
+    target = connection if connection is not None else get_engine()
+    df.to_sql(table_name, target, if_exists="replace", index=False, method="multi")
+    load_data.clear()
+
+
+def save_dataset_tables(sheets):
+    """Replace the active imported dataset in one PostgreSQL transaction."""
+    with get_engine().begin() as conn:
+        for table_name in ["vendors", "documents", "subcontractors", "document_requirements"]:
+            save_table(sheets[table_name], table_name, connection=conn)
+        if "findings" in sheets:
+            save_table(sheets["findings"], "findings", connection=conn)
+        elif table_exists("findings"):
+            conn.execute(text('DROP TABLE IF EXISTS "findings"'))
     load_data.clear()
 
 
 def restore_default_dataset_if_needed():
-    """Rebuilds the transient SQLite dataset from a workbook committed with the app."""
+    """Seed PostgreSQL only when no persistent vendor dataset exists yet.
+
+    Once an Excel workbook has been committed, the remote database remains the
+    source of truth across Streamlit reboots/container resets.
+    """
     if table_exists("vendors"):
         existing = load_data("vendors")
         if not existing.empty:
@@ -575,34 +508,40 @@ def restore_default_dataset_if_needed():
     if not required.issubset(available):
         return False
 
+    seed_sheets = {}
     for table_name in ["vendors", "documents", "subcontractors", "document_requirements"]:
-        frame = normalize_columns(pd.read_excel(xls, sheet_name=available[table_name]))
-        save_table(frame, table_name)
+        seed_sheets[table_name] = normalize_columns(
+            pd.read_excel(xls, sheet_name=available[table_name])
+        )
     if "findings" in available:
-        frame = normalize_columns(pd.read_excel(xls, sheet_name=available["findings"]))
-        save_table(frame, "findings")
+        seed_sheets["findings"] = normalize_columns(
+            pd.read_excel(xls, sheet_name=available["findings"])
+        )
+
+    save_dataset_tables(seed_sheets)
     return True
 
 
 def save_document_file(vendor_id, doc_type, filename, content_type, file_bytes):
     ensure_document_files_table()
-    conn = get_connection()
-    try:
-        b64 = base64.b64encode(file_bytes).decode("utf-8")
+    b64 = base64.b64encode(file_bytes).decode("utf-8")
+    with get_engine().begin() as conn:
         conn.execute(
-            """
-            INSERT INTO document_files
-                (vendor_id, doc_type, filename, content_type, file_b64, uploaded_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                int(vendor_id), str(doc_type), filename, content_type,
-                b64, datetime.now().strftime("%Y-%m-%d %H:%M"),
-            ),
+            text("""
+                INSERT INTO document_files
+                    (vendor_id, doc_type, filename, content_type, file_b64, uploaded_at)
+                VALUES
+                    (:vendor_id, :doc_type, :filename, :content_type, :file_b64, :uploaded_at)
+            """),
+            {
+                "vendor_id": int(vendor_id),
+                "doc_type": str(doc_type),
+                "filename": filename,
+                "content_type": content_type,
+                "file_b64": b64,
+                "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            },
         )
-        conn.commit()
-    finally:
-        conn.close()
     load_data.clear()
 
 
@@ -615,26 +554,26 @@ def save_vendor_assessment(vendor_id, values):
         "fourth_party_exposure", "override_rating", "override_reason",
         "override_review_date",
     ]
-    payload = [values.get(column) for column in columns]
-    conn = get_connection()
-    try:
-        placeholders = ", ".join(["?"] * (len(columns) + 2))
-        updates = ", ".join([f"{column}=excluded.{column}" for column in columns])
-        conn.execute(
-            f"""
-            INSERT INTO vendor_assessments
-                (vendor_id, {', '.join(columns)}, updated_at)
-            VALUES ({placeholders})
-            ON CONFLICT(vendor_id) DO UPDATE SET
-                {updates}, updated_at=excluded.updated_at
-            """,
-            [int(vendor_id), *payload, datetime.now().strftime("%Y-%m-%d %H:%M")],
-        )
-        conn.commit()
-    finally:
-        conn.close()
-    load_data.clear()
+    payload = {column: values.get(column) for column in columns}
+    payload["vendor_id"] = int(vendor_id)
+    payload["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+    insert_columns = ["vendor_id", *columns, "updated_at"]
+    value_names = ", ".join(f":{column}" for column in insert_columns)
+    updates = ", ".join(f"{column}=EXCLUDED.{column}" for column in columns)
+
+    with get_engine().begin() as conn:
+        conn.execute(
+            text(f"""
+                INSERT INTO vendor_assessments
+                    ({', '.join(insert_columns)})
+                VALUES ({value_names})
+                ON CONFLICT (vendor_id) DO UPDATE SET
+                    {updates}, updated_at=EXCLUDED.updated_at
+            """),
+            payload,
+        )
+    load_data.clear()
 
 def get_document_file(vendor_id, doc_type):
     ensure_document_files_table()
@@ -1322,7 +1261,6 @@ def generate_findings(vendor, documents, subcontractors, requirements):
 
 ensure_document_files_table()
 ensure_vendor_assessments_table()
-ensure_iam_tables()
 default_dataset_restored = restore_default_dataset_if_needed()
 
 vendors = load_data("vendors")
@@ -1330,23 +1268,6 @@ documents = load_data("documents")
 subcontractors = load_data("subcontractors")
 requirements = load_data("document_requirements")
 findings_db = load_data("findings")
-
-
-# ============================================================
-# INTERNAL LAB ROLE CONTEXT
-# Authentication is handled by Microsoft Entra ID above.
-# The local role below is retained only to drive the training
-# RBAC/segregation-of-duties scenarios inside the lab.
-# ============================================================
-
-if not active_identity():
-    st.session_state["iam_active_upn"] = "oversight@grclab.local"
-    entra_email = getattr(st.user, "email", None) or getattr(st.user, "preferred_username", None) or "authenticated-user"
-    audit_event(
-        "Entra sign-in",
-        "TPRM Risk Lab",
-        details=f"Microsoft Entra authenticated session established for {entra_email}; lab role context initialized.",
-    )
 
 
 # ============================================================
@@ -1366,38 +1287,55 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
-identity = active_identity()
-entra_name = getattr(st.user, "name", None) or getattr(st.user, "email", None) or "Authenticated user"
-entra_email = getattr(st.user, "email", None) or getattr(st.user, "preferred_username", None) or ""
+# Real Microsoft Entra identity shown in the workspace shell.
+auth_user = getattr(st, "user", None)
+if auth_user is None:
+    auth_user = getattr(st, "experimental_user", None)
+
+entra_name = (
+    getattr(auth_user, "name", None)
+    or getattr(auth_user, "email", None)
+    or getattr(auth_user, "preferred_username", None)
+    or "Authenticated user"
+)
+entra_email = (
+    getattr(auth_user, "email", None)
+    or getattr(auth_user, "preferred_username", None)
+    or ""
+)
+
+show_email = st.sidebar.toggle("Show email", value=False, key="show_entra_email")
+email_html = (
+    f'<div class="entra-user-email">{entra_email}</div>'
+    if show_email and entra_email and entra_email != entra_name
+    else ""
+)
+
 st.sidebar.markdown(
     f"""
-    <div style="padding:.75rem;border:1px solid #293653;border-radius:6px;margin-bottom:1rem;">
-        <div style="font-size:.63rem;color:#8a96b3;font-weight:800;letter-spacing:.08em;">MICROSOFT ENTRA ID</div>
-        <div style="font-weight:700;margin-top:.2rem;">{entra_name}</div>
-        {f'<div style="font-size:.68rem;color:#a9b5ce;margin-top:.1rem;">{entra_email}</div>' if entra_email and entra_email != entra_name else ''}
-        <div style="font-size:.63rem;color:#8a96b3;font-weight:800;letter-spacing:.08em;margin-top:.65rem;">LAB ROLE</div>
-        <div style="font-size:.7rem;color:#a9b5ce;">{identity['app_role']}</div>
+    <div class="entra-user-card">
+        <div class="entra-user-kicker">MICROSOFT ENTRA ID</div>
+        <div class="entra-user-name">{entra_name}</div>
+        {email_html}
+        <div class="entra-user-status">Authenticated</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-if st.sidebar.button("Sign out", use_container_width=True):
-    audit_event("Entra sign-out", "TPRM Risk Lab")
-    st.session_state.pop("iam_active_upn", None)
+if st.sidebar.button("Sign out", use_container_width=True, key="entra_signout"):
     st.logout()
 
 all_pages = [
     "Executive Dashboard", "Vendor Portfolio", "Risk Register",
     "Findings & Remediation", "Fourth-Party Risk", "Document Compliance",
     "Sample Document Library", "Assessment Simulation",
-    "IT Risk / GRC Practice Lab", "Data Import", "Identity & Access",
+    "IT Risk / GRC Practice Lab", "Data Import",
 ]
-available_pages = [page for page in all_pages if has_permission(PAGE_PERMISSIONS[page])]
 
 menu = st.sidebar.radio(
     "WORKSPACE",
-    available_pages,
+    all_pages,
 )
 
 st.sidebar.markdown(
@@ -1677,12 +1615,8 @@ elif menu == "Vendor Portfolio":
                 "the rating is clearly marked as provisional."
             )
             saved = assessment_row(v["vendor_id"])
-            can_assess = has_permission("assessment.write")
-            can_override = has_permission("override.write")
-            if not can_assess:
-                st.info("Your current app role has read-only access to assessment inputs.")
-            elif not can_override:
-                st.caption("Segregation of duties: model inputs may be updated, but a final rating override requires Risk Oversight.")
+            can_assess = True
+            can_override = True
             score_options = [None, 0, 1, 2, 3]
             score_labels = {
                 None: "Review Required", 0: "0 — None / negligible",
@@ -1702,7 +1636,7 @@ elif menu == "Vendor Portfolio":
                         criticality_values[field] = st.selectbox(
                             FIELD_LABELS[field], score_options, index=saved_index(field),
                             format_func=lambda value: score_labels[value], key=f"{field}_{v['vendor_id']}",
-                            disabled=not can_assess,
+                            disabled=False,
                         )
 
                 st.markdown("**Inherent-risk factors**")
@@ -1713,7 +1647,7 @@ elif menu == "Vendor Portfolio":
                         inherent_values[field] = st.selectbox(
                             FIELD_LABELS[field], score_options, index=saved_index(field),
                             format_func=lambda value: score_labels[value], key=f"{field}_{v['vendor_id']}",
-                            disabled=not can_assess,
+                            disabled=False,
                         )
 
                 st.markdown("**Human override — optional**")
@@ -1722,20 +1656,20 @@ elif menu == "Vendor Portfolio":
                 override_default = override_options.index(current_override) if current_override in override_options else 0
                 override_rating = st.selectbox(
                     "Final rating override", override_options, index=override_default,
-                    disabled=not can_override,
+                    disabled=False,
                 )
                 override_reason = st.text_area(
                     "Override reason", value=str(saved.get("override_reason", "") or ""),
-                    placeholder="Required when an override is selected.", disabled=not can_override,
+                    placeholder="Required when an override is selected.", disabled=False,
                 )
                 override_review_date = st.text_input(
                     "Override review date", value=str(saved.get("override_review_date", "") or ""),
-                    placeholder="YYYY-MM-DD", disabled=not can_override,
+                    placeholder="YYYY-MM-DD", disabled=False,
                 )
 
                 if st.form_submit_button(
                     "Save Assessment", type="primary", use_container_width=True,
-                    disabled=not (can_assess or can_override),
+                    disabled=False,
                 ):
                     if override_rating != "No override" and not override_reason.strip():
                         st.error("Document the reason before applying a human override.")
@@ -1746,10 +1680,6 @@ elif menu == "Vendor Portfolio":
                             "override_reason": override_reason.strip(),
                             "override_review_date": override_review_date.strip(),
                         })
-                        audit_event(
-                            "Assessment updated", v["name"],
-                            details=("Human override included" if override_rating != "No override" else "Factor inputs updated"),
-                        )
                         st.success("Assessment saved.")
                         st.rerun()
 
@@ -3415,108 +3345,6 @@ elif menu == "IT Risk / GRC Practice Lab":
 
 
 # ============================================================
-# IDENTITY & ACCESS
-# ============================================================
-
-elif menu == "Identity & Access":
-
-    page_header(
-        "Microsoft Entra-inspired simulation",
-        "Identity & Access Governance",
-        "Explore workforce identities, group-based assignment, app roles, MFA posture and auditable access events.",
-    )
-
-    st.warning(
-        "Lab simulation only: these controls reproduce IAM concepts and decision flows, not Microsoft authentication or production security."
-    )
-
-    current_permissions = ROLE_PERMISSIONS.get(identity["app_role"], set())
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Workforce identities", len(iam_users()))
-    col2.metric("Active identities", int((iam_users()["status"] == "Active").sum()))
-    col3.metric("MFA coverage", f'{int((iam_users()["mfa"] == "Required").mean() * 100)}%')
-    col4.metric("Your app role", identity["app_role"])
-
-    tabs = st.tabs(["Users & groups", "Access matrix", "Audit log", "Control model"])
-
-    with tabs[0]:
-        users_view = iam_users()[[
-            "display_name", "upn", "department", "job_title", "group_name",
-            "app_role", "status", "mfa",
-        ]]
-        st.dataframe(users_view, use_container_width=True, hide_index=True)
-        if has_permission("admin.data"):
-            st.markdown("#### Identity lifecycle administration")
-            managed_users = iam_users()
-            target_upn = st.selectbox("Identity", managed_users["upn"].tolist(), key="iam_target")
-            target = managed_users[managed_users["upn"] == target_upn].iloc[0]
-            new_status = st.selectbox(
-                "Account status", ["Active", "Disabled"],
-                index=0 if target["status"] == "Active" else 1,
-            )
-            if st.button("Apply account status", type="primary"):
-                if target_upn == identity["upn"] and new_status == "Disabled":
-                    st.error("Self-deactivation is blocked in the lab to prevent administrator lockout.")
-                    audit_event("Identity status change", target_upn, "Blocked", "Self-deactivation prevented")
-                else:
-                    update_identity_status(target["user_id"], new_status)
-                    audit_event("Identity status change", target_upn, details=f"Status set to {new_status}")
-                    st.success(f"{target_upn} is now {new_status}.")
-                    st.rerun()
-        else:
-            st.caption("User lifecycle changes require the Global Administrator role.")
-
-    with tabs[1]:
-        permission_labels = [
-            ("View dashboards", "dashboard.read"), ("View vendor risk", "vendor.read"),
-            ("Update assessment inputs", "assessment.write"), ("Apply human override", "override.write"),
-            ("Attach evidence", "evidence.write"), ("Manage findings", "finding.write"),
-            ("Challenge findings", "finding.challenge"), ("Accept residual risk", "risk.accept"),
-            ("Import datasets", "data.import"), ("Administer identities", "admin.data"),
-            ("View audit trail", "audit.read"),
-        ]
-        matrix = []
-        for role, permissions in ROLE_PERMISSIONS.items():
-            row = {"App role": role}
-            for label, permission in permission_labels:
-                row[label] = "Allowed" if "*" in permissions or permission in permissions else "Denied"
-            matrix.append(row)
-        st.dataframe(pd.DataFrame(matrix), use_container_width=True, hide_index=True)
-        st.caption(
-            "Segregation example: analysts can assess and collect evidence; Risk Oversight can challenge and override; "
-            "Risk Owners accept residual risk; auditors remain read-only."
-        )
-
-    with tabs[2]:
-        if has_permission("audit.read") or has_permission("admin.data"):
-            events = audit_log()
-            if events.empty:
-                st.info("No access events recorded yet.")
-            else:
-                st.dataframe(events, use_container_width=True, hide_index=True)
-        else:
-            st.info("Audit events are restricted to Risk Oversight, Internal Audit and administrators.")
-
-    with tabs[3]:
-        st.markdown(
-            """
-            **How the simulation maps to enterprise IAM**
-
-            - **Work account / UPN:** fictional workforce identity.
-            - **Security group:** represents group-based access assignment.
-            - **App role:** determines what the identity can do inside this application.
-            - **MFA requirement:** conditional-access concept represented as a sign-in control.
-            - **Least privilege:** users receive only the access needed for their responsibility.
-            - **Segregation of duties:** assessment, independent challenge, risk acceptance and administration are separated.
-            - **Audit trail:** material sign-ins and changes record actor, target, outcome and time.
-
-            A production bank would connect the application to its identity provider, use strong authentication,
-            privileged identity management, access reviews, joiner-mover-leaver workflows and central security monitoring.
-            """
-        )
-
-
-# ============================================================
 # DATA IMPORT
 # ============================================================
 
@@ -3569,16 +3397,22 @@ elif menu == "Data Import":
 
             st.divider()
 
-            if st.button("Commit Dataset to TPRM Database", type="primary", use_container_width=True):
-                for name in ["vendors", "documents", "subcontractors", "document_requirements"]:
-                    save_table(sheets[name], name)
-                if "findings" in sheets:
-                    save_table(sheets["findings"], "findings")
-                audit_event(
-                    "Dataset imported", uploaded.name,
-                    details=f'{len(sheets["vendors"])} vendors committed to the lab database',
+            confirm_replace = st.checkbox(
+                "I understand this will replace the current persistent dataset",
+                value=False,
+            )
+            if st.button(
+                "Commit Dataset to Persistent Database",
+                type="primary",
+                use_container_width=True,
+                disabled=not confirm_replace,
+            ):
+                save_dataset_tables(sheets)
+                st.success(
+                    "Dataset committed to PostgreSQL successfully. It will persist across Streamlit reboots and container resets."
                 )
-                st.success("Dataset imported successfully.")
+                st.cache_data.clear()
+                st.rerun()
 
         except Exception as exc:
             st.error(f"Unable to process workbook: {exc}")
