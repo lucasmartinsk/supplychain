@@ -75,22 +75,7 @@ st.set_page_config(
 
 def require_microsoft_login():
     """Block the workspace until a Microsoft Entra ID session is authenticated."""
-    # st.login/st.logout were introduced in Streamlit 1.42.0.
-    # st.user became generally available in 1.45.0; older compatible
-    # versions expose the same OIDC identity through st.experimental_user.
-    if not hasattr(st, "login"):
-        st.error(
-            "This app needs Streamlit 1.42.0 or newer for Microsoft Entra ID login. "
-            "Update requirements.txt to use streamlit>=1.45.0 and reboot the app."
-        )
-        st.code("streamlit>=1.45.0")
-        st.stop()
-
-    auth_user = getattr(st, "user", None)
-    if auth_user is None:
-        auth_user = getattr(st, "experimental_user", None)
-
-    if auth_user is not None and getattr(auth_user, "is_logged_in", False):
+    if st.user.is_logged_in:
         return
 
     st.markdown(
