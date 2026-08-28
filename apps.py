@@ -1652,27 +1652,49 @@ Rules:
 def run_ai_case_review(case_context):
     if OpenAI is None:
         raise RuntimeError("The OpenAI Python package is not installed. Add 'openai' to requirements.txt and redeploy.")
-    api_key = st.secrets.get("OPENAI_API_KEY", "")
+
+    api_key = st.secrets.get("OPENROUTER_API_KEY", "")
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not configured in Streamlit Secrets.")
-    model = st.secrets.get("OPENAI_MODEL", "gpt-5.6-luna")
-    client = OpenAI(api_key=api_key)
-    response = client.responses.create(
+        raise RuntimeError("OPENROUTER_API_KEY is not configured in Streamlit Secrets.")
+
+    model = st.secrets.get("AI_MODEL", "openrouter/free")
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://openrouter.ai/api/v1",
+        default_headers={
+            "HTTP-Referer": "https://supplychain-test.streamlit.app",
+            "X-Title": "TPRM Risk Lab",
+        },
+    )
+
+    user_prompt = (
+        "Review this TPRM vendor case and return the structured analyst recommendation.\n\n"
+        "CASE DATA:\n"
+        + json.dumps(case_context, ensure_ascii=False, default=str)
+    )
+
+    response = client.chat.completions.create(
         model=model,
-        instructions=AI_COPILOT_INSTRUCTIONS,
-        input="Review this TPRM vendor case and return the structured analyst recommendation.\n\nCASE DATA:\n" + json.dumps(case_context, ensure_ascii=False, default=str),
-        text={
-            "format": {
-                "type": "json_schema",
+        messages=[
+            {"role": "system", "content": AI_COPILOT_INSTRUCTIONS},
+            {"role": "user", "content": user_prompt},
+        ],
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
                 "name": "tprm_case_review",
                 "description": "Structured human-in-the-loop TPRM case recommendation.",
                 "schema": AI_REVIEW_SCHEMA,
                 "strict": True,
-            }
+            },
         },
-        store=False,
+        extra_body={"provider": {"require_parameters": True}},
     )
-    return json.loads(response.output_text)
+
+    content = response.choices[0].message.content
+    if not content:
+        raise RuntimeError("OpenRouter returned an empty AI review.")
+    return json.loads(content)
 
 
 def apply_ai_case_recommendation(vendor_id, case_state, review, actor):
@@ -2564,13 +2586,13 @@ elif menu == "Vendor Case Workspace":
         st.subheader("AI Analyst Copilot")
         st.caption("The Copilot reviews the current vendor case and proposes a recommendation. Nothing is changed until you explicitly approve it.")
 
-        api_ready = bool(st.secrets.get("OPENAI_API_KEY", "")) and OpenAI is not None
+        api_ready = bool(st.secrets.get("OPENROUTER_API_KEY", "")) and OpenAI is not None
         if not api_ready:
-            st.info("AI Copilot is ready in the app, but the OpenAI API connection is not configured yet.")
+            st.info("AI Copilot is ready in the app, but the OpenRouter connection is not configured yet.")
             if OpenAI is None:
                 st.code("Add to requirements.txt:\nopenai", language="text")
-            if not st.secrets.get("OPENAI_API_KEY", ""):
-                st.code('Add to Streamlit Secrets:\nOPENAI_API_KEY = "your-key"\n# optional\nOPENAI_MODEL = "gpt-5.6-luna"', language="toml")
+            if not st.secrets.get("OPENROUTER_API_KEY", ""):
+                st.code('Add to Streamlit Secrets:\nOPENROUTER_API_KEY = "your-key"\n# optional\nAI_MODEL = "openrouter/free"', language="toml")
         else:
             review_key = f"ai_case_review_{vendor_id}"
             run_col, clear_col = st.columns([1, .35])
