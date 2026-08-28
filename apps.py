@@ -1,6 +1,8 @@
 import base64
 import io
 import json
+import hashlib
+import html
 from datetime import datetime
 from pathlib import Path
 
@@ -314,6 +316,54 @@ st.markdown(
     .treatment-title { color:#1a2233; font-weight:700; font-size:.79rem; }
     .treatment-copy { color:#5b6478; font-size:.74rem; margin-top:.15rem; line-height:1.45; }
 
+    /* AI Copilot - compact operational review layout */
+    .ai-review-shell {
+        border:1px solid #d9e0eb; border-radius:8px; background:#ffffff;
+        padding:1.05rem 1.15rem; margin:.65rem 0 .9rem;
+        box-shadow:0 1px 2px rgba(15,23,42,.035);
+    }
+    .ai-review-top {
+        display:flex; align-items:flex-start; justify-content:space-between; gap:1rem;
+        padding-bottom:.8rem; border-bottom:1px solid #edf0f5; margin-bottom:.9rem;
+    }
+    .ai-eyebrow {
+        color:#65718a; font:800 .62rem 'JetBrains Mono',monospace;
+        text-transform:uppercase; letter-spacing:.11em;
+    }
+    .ai-review-title { color:#0f1729; font-size:1.08rem; font-weight:800; margin-top:.18rem; }
+    .ai-review-meta { color:#7a8498; font-size:.71rem; margin-top:.22rem; }
+    .ai-status-pill {
+        display:inline-flex; align-items:center; padding:.26rem .55rem; border-radius:999px;
+        font:800 .62rem 'JetBrains Mono',monospace; letter-spacing:.03em;
+        border:1px solid #c9d9f4; background:#edf4ff; color:#2455a6; white-space:nowrap;
+    }
+    .ai-status-pill.stale { background:#fbf1cf; border-color:#ead690; color:#806710; }
+    .ai-summary { color:#354057; font-size:.86rem; line-height:1.62; }
+    .ai-section-label {
+        color:#65718a; font:800 .64rem 'JetBrains Mono',monospace;
+        text-transform:uppercase; letter-spacing:.1em; margin-bottom:.5rem;
+    }
+    .ai-observation {
+        border:1px solid #e3e7ef; border-radius:6px; background:#f8f9fc;
+        padding:.65rem .75rem; margin-bottom:.42rem; color:#354057; font-size:.79rem; line-height:1.45;
+    }
+    .ai-observation strong { color:#182238; }
+    .ai-recommendation {
+        border-left:3px solid #315fbe; background:#eef4ff; border-radius:0 6px 6px 0;
+        padding:.8rem .9rem; color:#173e80; font-size:.83rem; line-height:1.55; margin:.65rem 0 1rem;
+    }
+    .ai-change-grid { display:grid; grid-template-columns:1fr 1fr; gap:.65rem; margin:.55rem 0 .85rem; }
+    .ai-change-card { border:1px solid #dfe4ed; border-radius:6px; background:#fff; padding:.72rem .8rem; }
+    .ai-change-label { color:#727d91; font:800 .61rem 'JetBrains Mono',monospace; text-transform:uppercase; letter-spacing:.08em; }
+    .ai-change-current { color:#7b8496; font-size:.72rem; margin-top:.35rem; }
+    .ai-change-arrow { color:#9aa3b8; padding:0 .25rem; }
+    .ai-change-proposed { color:#16233b; font-size:.8rem; font-weight:700; margin-top:.18rem; line-height:1.42; }
+    .ai-human-control {
+        border:1px solid #ead690; background:#fff9e8; border-radius:6px;
+        padding:.7rem .8rem; color:#6e5910; font-size:.76rem; margin:.8rem 0 .55rem;
+    }
+    @media (max-width: 850px) { .ai-change-grid { grid-template-columns:1fr; } }
+
     .attention-row {
         display:grid; grid-template-columns:1.6fr .7fr .55fr; gap:.8rem; align-items:center;
         padding:.7rem 0; border-bottom:1px solid #edeff4;
@@ -514,6 +564,20 @@ def ensure_vendor_case_tables():
                 created_at TEXT
             )
         """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS vendor_ai_reviews (
+                review_id BIGSERIAL PRIMARY KEY,
+                vendor_id BIGINT,
+                context_hash TEXT,
+                model TEXT,
+                review_json TEXT,
+                created_by TEXT,
+                created_at TEXT,
+                disposition TEXT,
+                disposed_by TEXT,
+                disposed_at TEXT
+            )
+        """))
 
 
 def _now_label():
@@ -679,7 +743,7 @@ def _load_data_cached(table_name, revision):
         "vendors", "documents", "subcontractors",
         "document_requirements", "findings", "document_files",
         "vendor_assessments", "vendor_case_state", "vendor_case_notes",
-        "vendor_finding_actions", "vendor_activity_log",
+        "vendor_finding_actions", "vendor_activity_log", "vendor_ai_reviews",
     }
     if table_name not in allowed or not table_exists(table_name):
         return pd.DataFrame()
@@ -691,7 +755,7 @@ def _load_data_cached(table_name, revision):
 def _load_vendor_rows_cached(table_name, vendor_id, revision):
     allowed = {
         "vendor_assessments", "vendor_case_state", "vendor_case_notes",
-        "vendor_finding_actions", "vendor_activity_log",
+        "vendor_finding_actions", "vendor_activity_log", "vendor_ai_reviews",
     }
     if table_name not in allowed or not table_exists(table_name):
         return pd.DataFrame()
@@ -1547,23 +1611,33 @@ def _clean_for_ai(value):
             return value.item()
         except Exception:
             pass
+    if isinstance(value, str) and len(value) > 500:
+        return value[:500]
     return value
 
 
-def _records_for_ai(df, limit=30):
+def _compact_records_for_ai(df, preferred_fields, limit=15):
+    """Keep the AI packet small: only operational fields that can affect the review."""
     if df is None or df.empty:
         return []
-    return [
-        {str(k): _clean_for_ai(v) for k, v in row.items()}
-        for row in df.head(limit).to_dict(orient="records")
-    ]
+    fields = [c for c in preferred_fields if c in df.columns]
+    if not fields:
+        fields = list(df.columns[:8])
+    rows = df[fields].head(limit).to_dict(orient="records")
+    return [{str(k): _clean_for_ai(v) for k, v in row.items()} for row in rows]
 
 
 def build_ai_case_context(vendor, risk, generated_findings, case_state, vendor_actions, documents, subcontractors):
-    """Build a compact vendor-scoped packet. Secrets and database credentials are never included."""
+    """Build a minimal vendor-scoped packet. No secrets, credentials, files or audit history are sent."""
     vendor_id = int(vendor.get("vendor_id"))
     vendor_docs = documents[documents["vendor_id"] == vendor_id].copy() if not documents.empty and "vendor_id" in documents.columns else pd.DataFrame()
     vendor_subs = subcontractors[subcontractors["vendor_id"] == vendor_id].copy() if not subcontractors.empty and "vendor_id" in subcontractors.columns else pd.DataFrame()
+
+    vendor_fields = [
+        "vendor_id", "name", "service", "criticality", "country", "business_owner",
+        "data_classification", "data_access", "system_access", "contract_end_date", "status",
+    ]
+    vendor_packet = {k: _clean_for_ai(vendor.get(k)) for k in vendor_fields if k in vendor.index}
 
     findings = []
     for idx, finding in enumerate(generated_findings, start=1):
@@ -1571,42 +1645,48 @@ def build_ai_case_context(vendor, risk, generated_findings, case_state, vendor_a
         tracked = vendor_actions[vendor_actions["finding_key"] == finding_key] if not vendor_actions.empty and "finding_key" in vendor_actions.columns else pd.DataFrame()
         latest = tracked.iloc[-1].to_dict() if not tracked.empty else {}
         findings.append({
-            "finding_id": f"F-{idx:03d}",
-            "finding_type": finding.get("finding_type"),
-            "domain": finding.get("domain"),
-            "severity": finding.get("severity"),
-            "description": finding.get("description"),
-            "rationale": finding.get("rationale"),
-            "remediation_status": latest.get("status", "Open"),
-            "remediation_owner": latest.get("owner", ""),
-            "due_date": latest.get("due_date", ""),
-            "remediation_plan": latest.get("remediation_plan", ""),
-            "validation_note": latest.get("validation_note", ""),
+            "id": f"F-{idx:03d}",
+            "type": _clean_for_ai(finding.get("finding_type")),
+            "domain": _clean_for_ai(finding.get("domain")),
+            "severity": _clean_for_ai(finding.get("severity")),
+            "description": _clean_for_ai(finding.get("description")),
+            "status": _clean_for_ai(latest.get("status", "Open")),
+            "due_date": _clean_for_ai(latest.get("due_date", "")),
         })
 
+    state_fields = ["case_status", "risk_decision", "decision_rationale", "next_action", "target_date", "updated_at"]
     return {
-        "vendor": {str(k): _clean_for_ai(v) for k, v in vendor.to_dict().items()},
-        "risk_engine": {
-            "criticality_tier": risk.get("criticality_tier"),
-            "inherent_level": risk.get("inherent_level"),
-            "inherent_score": risk.get("inherent_score"),
+        "vendor": vendor_packet,
+        "risk": {
+            "criticality": risk.get("criticality_tier"),
+            "inherent": risk.get("inherent_level"),
             "control_effectiveness": risk.get("control_effectiveness"),
-            "calculated_residual": risk.get("calculated_residual"),
-            "final_residual": risk.get("final_residual"),
+            "residual": risk.get("final_residual"),
             "treatment": risk.get("treatment"),
-            "treatment_copy": risk.get("treatment_copy"),
-            "monitoring": risk.get("monitoring"),
             "assessment_quality": risk.get("assessment_quality"),
             "evidence_coverage_pct": risk.get("compliance", {}).get("percentage"),
             "missing_evidence": risk.get("compliance", {}).get("missing", []),
             "expired_evidence": risk.get("compliance", {}).get("expired", []),
             "pending_evidence": risk.get("compliance", {}).get("pending", []),
         },
-        "current_case_state": {str(k): _clean_for_ai(v) for k, v in case_state.items()},
-        "findings": findings,
-        "document_records": _records_for_ai(vendor_docs, 25),
-        "fourth_parties": _records_for_ai(vendor_subs, 20),
+        "case": {k: _clean_for_ai(case_state.get(k)) for k in state_fields if k in case_state},
+        "findings": findings[:12],
+        "documents": _compact_records_for_ai(
+            vendor_docs,
+            ["document_type", "doc_type", "status", "expiry_date", "received_date", "review_status"],
+            15,
+        ),
+        "fourth_parties": _compact_records_for_ai(
+            vendor_subs,
+            ["subcontractor_name", "name", "service", "country", "disclosed", "status", "risk_rating"],
+            10,
+        ),
     }
+
+
+def ai_context_hash(case_context):
+    canonical = json.dumps(case_context, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 AI_REVIEW_SCHEMA = {
@@ -1633,25 +1713,30 @@ AI_REVIEW_SCHEMA = {
 
 
 AI_COPILOT_INSTRUCTIONS = """
-You are a senior Third-Party Risk Management (TPRM) analyst copilot working in a regulated financial-services environment.
-Review only the case data supplied by the application. Do not invent vendor facts, evidence, control effectiveness, regulatory compliance, or remediation evidence.
+You are a senior Third-Party Risk Management analyst copilot in a regulated financial-services environment.
+Use only the supplied case data. Never invent evidence, vendor facts, control effectiveness, compliance or remediation evidence.
 
-Your job is to summarize the case, explain the key risk logic, challenge weak assumptions, recommend a practical next step, and propose a case status, risk decision, next action, and decision rationale for human review.
+Return a concise operational review for a human analyst:
+- case_summary: maximum 90 words;
+- risk_explanation: maximum 100 words;
+- recommendation: maximum 65 words;
+- evidence_gaps: maximum 4 short items;
+- risk_challenges: maximum 4 short items;
+- proposed_next_action: one practical action, maximum 55 words;
+- proposed_rationale: maximum 100 words.
 
-Rules:
-- Missing evidence is uncertainty, not proof that a control is effective or ineffective.
-- Do not recommend closing a material finding without adequate validation evidence.
-- Be proportionate to vendor criticality and actual case facts.
+Risk rules:
+- Missing evidence means uncertainty; it is not proof that a control works or fails.
+- Do not close material findings without validation evidence.
+- Be proportionate to vendor criticality and the facts supplied.
 - If information is insufficient, prefer Further review / Awaiting Vendor over unsupported approval.
-- Distinguish facts from analytical judgment.
-- The recommendation is advisory. A human analyst remains accountable and must explicitly approve every database change.
-- Keep the output concise enough to scan in an operational case-management screen.
+- The recommendation is advisory. A human analyst must approve any change.
 """.strip()
 
 
 def run_ai_case_review(case_context):
     if OpenAI is None:
-        raise RuntimeError("The OpenAI Python package is not installed. Add 'openai' to requirements.txt and redeploy.")
+        raise RuntimeError("The OpenAI-compatible Python package is not installed. Add 'openai' to requirements.txt and redeploy.")
 
     api_key = st.secrets.get("OPENROUTER_API_KEY", "")
     if not api_key:
@@ -1661,23 +1746,19 @@ def run_ai_case_review(case_context):
     client = OpenAI(
         api_key=api_key,
         base_url="https://openrouter.ai/api/v1",
+        timeout=45.0,
         default_headers={
             "HTTP-Referer": "https://supplychain-test.streamlit.app",
             "X-Title": "TPRM Risk Lab",
         },
     )
 
-    user_prompt = (
-        "Review this TPRM vendor case and return the structured analyst recommendation.\n\n"
-        "CASE DATA:\n"
-        + json.dumps(case_context, ensure_ascii=False, default=str)
-    )
-
+    compact_json = json.dumps(case_context, ensure_ascii=False, default=str, separators=(",", ":"))
     response = client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": AI_COPILOT_INSTRUCTIONS},
-            {"role": "user", "content": user_prompt},
+            {"role": "user", "content": "Review this active TPRM case and return the structured recommendation. CASE=" + compact_json},
         ],
         response_format={
             "type": "json_schema",
@@ -1688,6 +1769,7 @@ def run_ai_case_review(case_context):
                 "strict": True,
             },
         },
+        max_tokens=1100,
         extra_body={"provider": {"require_parameters": True}},
     )
 
@@ -1695,6 +1777,72 @@ def run_ai_case_review(case_context):
     if not content:
         raise RuntimeError("OpenRouter returned an empty AI review.")
     return json.loads(content)
+
+
+def save_ai_review(vendor_id, context_hash, model, review, actor):
+    ensure_vendor_case_tables()
+    with get_engine().begin() as conn:
+        review_id = conn.execute(text("""
+            INSERT INTO vendor_ai_reviews
+                (vendor_id, context_hash, model, review_json, created_by, created_at, disposition)
+            VALUES
+                (:vendor_id, :context_hash, :model, :review_json, :created_by, :created_at, 'Pending')
+            RETURNING review_id
+        """), {
+            "vendor_id": int(vendor_id),
+            "context_hash": str(context_hash),
+            "model": str(model),
+            "review_json": json.dumps(review, ensure_ascii=False),
+            "created_by": str(actor or "Authenticated user"),
+            "created_at": _now_label(),
+        }).scalar_one()
+    invalidate_data("vendor_ai_reviews")
+    return int(review_id)
+
+
+def set_ai_review_disposition(review_id, disposition, actor):
+    if not review_id:
+        return
+    with get_engine().begin() as conn:
+        conn.execute(text("""
+            UPDATE vendor_ai_reviews
+            SET disposition=:disposition, disposed_by=:disposed_by, disposed_at=:disposed_at
+            WHERE review_id=:review_id
+        """), {
+            "review_id": int(review_id),
+            "disposition": str(disposition),
+            "disposed_by": str(actor or "Authenticated user"),
+            "disposed_at": _now_label(),
+        })
+    invalidate_data("vendor_ai_reviews")
+
+
+def latest_ai_review(vendor_id):
+    rows = load_vendor_rows("vendor_ai_reviews", vendor_id)
+    if rows.empty:
+        return None
+    row = rows.sort_values("review_id", ascending=False).iloc[0].to_dict()
+    try:
+        review = json.loads(row.get("review_json", "{}") or "{}")
+    except Exception:
+        return None
+    review["_review_id"] = int(row.get("review_id"))
+    review["_context_hash"] = str(row.get("context_hash", ""))
+    review["_created_at"] = str(row.get("created_at", ""))
+    review["_created_by"] = str(row.get("created_by", ""))
+    review["_model"] = str(row.get("model", ""))
+    review["_disposition"] = str(row.get("disposition", "Pending") or "Pending")
+    return review
+
+
+def _h(value):
+    return html.escape(str(value or ""))
+
+
+def _ai_item_cards(items, empty_text):
+    if not items:
+        return f'<div class="ai-observation">{_h(empty_text)}</div>'
+    return "".join(f'<div class="ai-observation">{_h(item)}</div>' for item in items[:4])
 
 
 def apply_ai_case_recommendation(vendor_id, case_state, review, actor):
@@ -1714,6 +1862,7 @@ def apply_ai_case_recommendation(vendor_id, case_state, review, actor):
         f"Human-approved Copilot recommendation applied: status={values['case_status']}; decision={values['risk_decision']}.",
         actor,
     )
+    set_ai_review_disposition(review.get("_review_id"), "Approved", actor)
 
 
 # ============================================================
@@ -2584,7 +2733,7 @@ elif menu == "Vendor Case Workspace":
 
     with tabs[6]:
         st.subheader("AI Analyst Copilot")
-        st.caption("The Copilot reviews the current vendor case and proposes a recommendation. Nothing is changed until you explicitly approve it.")
+        st.caption("A concise, advisory review of the active vendor case. The analyst remains in control of every change.")
 
         api_ready = bool(st.secrets.get("OPENROUTER_API_KEY", "")) and OpenAI is not None
         if not api_ready:
@@ -2594,66 +2743,135 @@ elif menu == "Vendor Case Workspace":
             if not st.secrets.get("OPENROUTER_API_KEY", ""):
                 st.code('Add to Streamlit Secrets:\nOPENROUTER_API_KEY = "your-key"\n# optional\nAI_MODEL = "openrouter/free"', language="toml")
         else:
+            context = build_ai_case_context(v, risk, generated_findings, case_state, vendor_actions, documents, subcontractors)
+            context_hash = ai_context_hash(context)
             review_key = f"ai_case_review_{vendor_id}"
-            run_col, clear_col = st.columns([1, .35])
-            if run_col.button("Run AI Case Review", type="primary", use_container_width=True, key=f"run_ai_review_{vendor_id}"):
-                with st.spinner("Reviewing assessment, evidence, findings and current disposition..."):
-                    try:
-                        context = build_ai_case_context(v, risk, generated_findings, case_state, vendor_actions, documents, subcontractors)
-                        review = run_ai_case_review(context)
-                        st.session_state[review_key] = review
-                        log_vendor_activity(vendor_id, "AI case review generated", "Copilot generated an advisory case review. No case data was changed.", actor)
-                    except Exception as exc:
-                        st.error(f"AI review could not be completed: {exc}")
-            if clear_col.button("Clear review", use_container_width=True, key=f"clear_ai_review_{vendor_id}"):
+            hide_key = f"ai_case_review_hidden_{vendor_id}"
+
+            # Persistent reviews make the Copilot instant when the case has not changed.
+            if review_key not in st.session_state and not st.session_state.get(hide_key, False):
+                persisted = latest_ai_review(vendor_id)
+                if persisted:
+                    st.session_state[review_key] = persisted
+
+            review = st.session_state.get(review_key)
+            is_current = bool(review and review.get("_context_hash") == context_hash)
+            has_case_changed = bool(review and not is_current)
+
+            run_label = "Run new AI review" if review else "Run AI case review"
+            run_col, clear_col = st.columns([1, .28])
+            if run_col.button(run_label, type="primary", use_container_width=True, key=f"run_ai_review_{vendor_id}"):
+                status = st.status("Preparing vendor case...", expanded=True)
+                try:
+                    status.write("Building a minimal case packet — evidence, findings and disposition only.")
+                    status.write("Sending the case to the risk reviewer...")
+                    review = run_ai_case_review(context)
+                    model = st.secrets.get("AI_MODEL", "openrouter/free")
+                    review_id = save_ai_review(vendor_id, context_hash, model, review, actor)
+                    review.update({
+                        "_review_id": review_id,
+                        "_context_hash": context_hash,
+                        "_created_at": _now_label(),
+                        "_created_by": actor,
+                        "_model": model,
+                        "_disposition": "Pending",
+                    })
+                    st.session_state[review_key] = review
+                    st.session_state[hide_key] = False
+                    log_vendor_activity(vendor_id, "AI case review generated", "Copilot generated an advisory case review. No case data was changed.", actor)
+                    status.update(label="AI case review ready", state="complete", expanded=False)
+                    st.rerun()
+                except Exception as exc:
+                    status.update(label="AI review failed", state="error", expanded=True)
+                    st.error(f"AI review could not be completed: {exc}")
+
+            if clear_col.button("Hide review", use_container_width=True, key=f"clear_ai_review_{vendor_id}"):
                 st.session_state.pop(review_key, None)
+                st.session_state[hide_key] = True
                 st.rerun()
 
             review = st.session_state.get(review_key)
             if review:
-                c1, c2 = st.columns([1.25, .75])
-                with c1:
-                    st.markdown("#### Case summary")
-                    st.write(review.get("case_summary", ""))
-                    st.markdown("#### Why the Copilot sees it this way")
-                    st.write(review.get("risk_explanation", ""))
-                    st.markdown("#### Recommendation")
-                    st.info(review.get("recommendation", ""))
-                with c2:
-                    st.metric("AI confidence", review.get("confidence", "-"))
-                    gaps = review.get("evidence_gaps", [])
-                    challenges = review.get("risk_challenges", [])
-                    st.markdown("**Evidence gaps**")
-                    if gaps:
-                        for item in gaps:
-                            st.markdown(f"- {item}")
-                    else:
-                        st.caption("No material evidence gaps identified.")
-                    st.markdown("**Risk challenge**")
-                    if challenges:
-                        for item in challenges:
-                            st.markdown(f"- {item}")
-                    else:
-                        st.caption("No material challenge identified.")
+                current_tag = "Current case" if is_current else "Case changed"
+                tag_class = "" if is_current else " stale"
+                vendor_name_display = _h(v.get("name", "Active vendor"))
+                review_time = _h(review.get("_created_at", ""))
+                review_model = _h(review.get("_model", "AI model"))
+                disposition = _h(review.get("_disposition", "Pending"))
 
-                st.markdown("#### Proposed change")
+                st.markdown(
+                    f'''<div class="ai-review-shell">
+                        <div class="ai-review-top">
+                            <div>
+                                <div class="ai-eyebrow">AI case review</div>
+                                <div class="ai-review-title">{vendor_name_display}</div>
+                                <div class="ai-review-meta">Reviewed {review_time or "this session"} · {review_model} · {disposition}</div>
+                            </div>
+                            <div class="ai-status-pill{tag_class}">{current_tag}</div>
+                        </div>
+                        <div class="ai-section-label">Executive summary</div>
+                        <div class="ai-summary">{_h(review.get("case_summary", ""))}</div>
+                    </div>''',
+                    unsafe_allow_html=True,
+                )
+
+                if has_case_changed:
+                    st.warning("The vendor case has changed since this review. Treat the recommendation as historical and run a new review before applying it.")
+
+                obs1, obs2 = st.columns(2)
+                with obs1:
+                    st.markdown('<div class="ai-section-label">Evidence gaps</div>', unsafe_allow_html=True)
+                    st.markdown(_ai_item_cards(review.get("evidence_gaps", []), "No material evidence gaps identified."), unsafe_allow_html=True)
+                with obs2:
+                    st.markdown('<div class="ai-section-label">Risk challenge</div>', unsafe_allow_html=True)
+                    st.markdown(_ai_item_cards(review.get("risk_challenges", []), "No material risk challenge identified."), unsafe_allow_html=True)
+
+                st.markdown('<div class="ai-section-label" style="margin-top:.75rem;">AI recommendation</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="ai-recommendation">{_h(review.get("recommendation", ""))}</div>', unsafe_allow_html=True)
+
+                with st.expander("View risk rationale", expanded=False):
+                    st.write(review.get("risk_explanation", ""))
+                    st.caption(f"AI confidence: {review.get('confidence', '-')}. Confidence reflects the model's assessment of the supplied case data; it is not a control assurance rating.")
+
                 current_status_display = str(case_state.get("case_status", "In Review") or "In Review")
                 current_decision_display = str(case_state.get("risk_decision", "Further review") or "Further review")
                 current_next_action = str(case_state.get("next_action", "") or "Not recorded")
-                p1, p2 = st.columns(2)
-                with p1:
-                    st.markdown(f"**Case status**  \n`{current_status_display}` → `{review.get('proposed_case_status', current_status_display)}`")
-                    st.markdown(f"**Risk decision**  \n`{current_decision_display}` → `{review.get('proposed_risk_decision', current_decision_display)}`")
-                with p2:
-                    st.markdown("**Next action**")
-                    st.caption(f"Current: {current_next_action}")
-                    st.write(review.get("proposed_next_action", ""))
-                st.markdown("**Proposed rationale**")
-                st.write(review.get("proposed_rationale", ""))
+                proposed_status = review.get("proposed_case_status", current_status_display)
+                proposed_decision = review.get("proposed_risk_decision", current_decision_display)
 
-                st.warning("Human approval required. Approving will update the case status, risk decision, next action and decision rationale in Supabase, and the action will be recorded in the audit trail.")
-                approve_col, reject_col = st.columns(2)
-                if approve_col.button("Approve & Apply Recommendation", type="primary", use_container_width=True, key=f"approve_ai_{vendor_id}"):
+                st.markdown('<div class="ai-section-label" style="margin-top:.8rem;">Proposed actions</div>', unsafe_allow_html=True)
+                st.markdown(
+                    f'''<div class="ai-change-grid">
+                        <div class="ai-change-card">
+                            <div class="ai-change-label">Case status</div>
+                            <div class="ai-change-current">{_h(current_status_display)} <span class="ai-change-arrow">→</span></div>
+                            <div class="ai-change-proposed">{_h(proposed_status)}</div>
+                        </div>
+                        <div class="ai-change-card">
+                            <div class="ai-change-label">Risk decision</div>
+                            <div class="ai-change-current">{_h(current_decision_display)} <span class="ai-change-arrow">→</span></div>
+                            <div class="ai-change-proposed">{_h(proposed_decision)}</div>
+                        </div>
+                        <div class="ai-change-card">
+                            <div class="ai-change-label">Next action</div>
+                            <div class="ai-change-current">Current: {_h(current_next_action)}</div>
+                            <div class="ai-change-proposed">{_h(review.get("proposed_next_action", ""))}</div>
+                        </div>
+                        <div class="ai-change-card">
+                            <div class="ai-change-label">Decision rationale</div>
+                            <div class="ai-change-proposed">{_h(review.get("proposed_rationale", ""))}</div>
+                        </div>
+                    </div>''',
+                    unsafe_allow_html=True,
+                )
+
+                st.markdown(
+                    '<div class="ai-human-control"><strong>Human approval required.</strong> The Copilot cannot write to the case by itself. Approval updates only the proposed case fields and records the action in the audit trail.</div>',
+                    unsafe_allow_html=True,
+                )
+                approve_col, reject_col = st.columns([1, 1])
+                can_apply = is_current and str(review.get("_disposition", "Pending")) == "Pending"
+                if approve_col.button("Approve & apply", type="primary", use_container_width=True, disabled=not can_apply, key=f"approve_ai_{vendor_id}"):
                     try:
                         apply_ai_case_recommendation(vendor_id, case_state, review, actor)
                         st.session_state.pop(review_key, None)
@@ -2661,14 +2879,15 @@ elif menu == "Vendor Case Workspace":
                         st.rerun()
                     except Exception as exc:
                         st.error(f"Recommendation could not be applied: {exc}")
-                if reject_col.button("Reject Recommendation", use_container_width=True, key=f"reject_ai_{vendor_id}"):
+                if reject_col.button("Reject recommendation", use_container_width=True, disabled=str(review.get("_disposition", "Pending")) != "Pending", key=f"reject_ai_{vendor_id}"):
+                    set_ai_review_disposition(review.get("_review_id"), "Rejected", actor)
                     log_vendor_activity(vendor_id, "AI recommendation rejected", "Analyst reviewed and rejected the Copilot recommendation. No case data was changed.", actor)
                     st.session_state.pop(review_key, None)
                     st.success("Recommendation rejected. No case data was changed.")
                     st.rerun()
             else:
                 st.markdown(
-                    '<div class="section-card"><div class="section-title">How it works</div><div style="font-size:.88rem;line-height:1.6;">The Copilot reads only the active vendor case context, summarizes the case, explains its risk view and proposes a controlled change. The analyst decides whether to apply it. The AI cannot update the database on its own.</div></div>',
+                    '<div class="section-card"><div class="section-title">AI review workflow</div><div style="font-size:.84rem;line-height:1.6;color:#566177;">The Copilot receives a compact snapshot of the active vendor, evidence posture, findings and current disposition. It returns one concise recommendation and proposed case changes. Nothing is written until the authenticated analyst approves it.</div></div>',
                     unsafe_allow_html=True,
                 )
 
