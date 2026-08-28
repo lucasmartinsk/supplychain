@@ -448,12 +448,198 @@ def ensure_vendor_assessments_table():
         """))
 
 
+def ensure_vendor_case_tables():
+    """Persistent case-management state for the end-to-end Vendor Case Workspace."""
+    with get_engine().begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS vendor_case_state (
+                vendor_id BIGINT PRIMARY KEY,
+                case_status TEXT,
+                risk_decision TEXT,
+                decision_rationale TEXT,
+                decision_owner TEXT,
+                next_action TEXT,
+                target_date TEXT,
+                updated_by TEXT,
+                updated_at TEXT
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS vendor_case_notes (
+                note_id BIGSERIAL PRIMARY KEY,
+                vendor_id BIGINT,
+                note_type TEXT,
+                note_text TEXT,
+                created_by TEXT,
+                created_at TEXT
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS vendor_finding_actions (
+                vendor_id BIGINT,
+                finding_key TEXT,
+                finding_type TEXT,
+                domain TEXT,
+                severity TEXT,
+                status TEXT,
+                owner TEXT,
+                due_date TEXT,
+                remediation_plan TEXT,
+                validation_note TEXT,
+                updated_by TEXT,
+                updated_at TEXT,
+                PRIMARY KEY (vendor_id, finding_key)
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS vendor_activity_log (
+                activity_id BIGSERIAL PRIMARY KEY,
+                vendor_id BIGINT,
+                activity_type TEXT,
+                activity_detail TEXT,
+                actor TEXT,
+                created_at TEXT
+            )
+        """))
+
+
+def _now_label():
+    return datetime.now().strftime("%Y-%m-%d %H:%M")
+
+
+def log_vendor_activity(vendor_id, activity_type, detail, actor):
+    ensure_vendor_case_tables()
+    with get_engine().begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO vendor_activity_log
+                    (vendor_id, activity_type, activity_detail, actor, created_at)
+                VALUES
+                    (:vendor_id, :activity_type, :activity_detail, :actor, :created_at)
+            """),
+            {
+                "vendor_id": int(vendor_id),
+                "activity_type": str(activity_type),
+                "activity_detail": str(detail),
+                "actor": str(actor or "Authenticated user"),
+                "created_at": _now_label(),
+            },
+        )
+    load_data.clear()
+
+
+def save_vendor_case_state(vendor_id, values, actor):
+    ensure_vendor_case_tables()
+    payload = {
+        "vendor_id": int(vendor_id),
+        "case_status": values.get("case_status", "In Review"),
+        "risk_decision": values.get("risk_decision", "Further review"),
+        "decision_rationale": values.get("decision_rationale", ""),
+        "decision_owner": values.get("decision_owner", ""),
+        "next_action": values.get("next_action", ""),
+        "target_date": values.get("target_date", ""),
+        "updated_by": str(actor or "Authenticated user"),
+        "updated_at": _now_label(),
+    }
+    with get_engine().begin() as conn:
+        conn.execute(text("""
+            INSERT INTO vendor_case_state
+                (vendor_id, case_status, risk_decision, decision_rationale, decision_owner,
+                 next_action, target_date, updated_by, updated_at)
+            VALUES
+                (:vendor_id, :case_status, :risk_decision, :decision_rationale, :decision_owner,
+                 :next_action, :target_date, :updated_by, :updated_at)
+            ON CONFLICT (vendor_id) DO UPDATE SET
+                case_status=EXCLUDED.case_status,
+                risk_decision=EXCLUDED.risk_decision,
+                decision_rationale=EXCLUDED.decision_rationale,
+                decision_owner=EXCLUDED.decision_owner,
+                next_action=EXCLUDED.next_action,
+                target_date=EXCLUDED.target_date,
+                updated_by=EXCLUDED.updated_by,
+                updated_at=EXCLUDED.updated_at
+        """), payload)
+    load_data.clear()
+    log_vendor_activity(
+        vendor_id,
+        "Risk decision updated",
+        f"Decision: {payload['risk_decision']} | Case status: {payload['case_status']}",
+        actor,
+    )
+
+
+def add_vendor_case_note(vendor_id, note_type, note_text, actor):
+    ensure_vendor_case_tables()
+    with get_engine().begin() as conn:
+        conn.execute(text("""
+            INSERT INTO vendor_case_notes
+                (vendor_id, note_type, note_text, created_by, created_at)
+            VALUES
+                (:vendor_id, :note_type, :note_text, :created_by, :created_at)
+        """), {
+            "vendor_id": int(vendor_id),
+            "note_type": str(note_type),
+            "note_text": str(note_text).strip(),
+            "created_by": str(actor or "Authenticated user"),
+            "created_at": _now_label(),
+        })
+    load_data.clear()
+    log_vendor_activity(vendor_id, f"{note_type} note added", str(note_text).strip()[:180], actor)
+
+
+def save_finding_action(vendor_id, finding, values, actor):
+    ensure_vendor_case_tables()
+    finding_key = f"{finding.get('finding_type', '')}|{finding.get('domain', '')}"
+    payload = {
+        "vendor_id": int(vendor_id),
+        "finding_key": finding_key,
+        "finding_type": finding.get("finding_type", "Finding"),
+        "domain": finding.get("domain", "General"),
+        "severity": finding.get("severity", "Medium"),
+        "status": values.get("status", "Open"),
+        "owner": values.get("owner", ""),
+        "due_date": values.get("due_date", ""),
+        "remediation_plan": values.get("remediation_plan", ""),
+        "validation_note": values.get("validation_note", ""),
+        "updated_by": str(actor or "Authenticated user"),
+        "updated_at": _now_label(),
+    }
+    with get_engine().begin() as conn:
+        conn.execute(text("""
+            INSERT INTO vendor_finding_actions
+                (vendor_id, finding_key, finding_type, domain, severity, status, owner,
+                 due_date, remediation_plan, validation_note, updated_by, updated_at)
+            VALUES
+                (:vendor_id, :finding_key, :finding_type, :domain, :severity, :status, :owner,
+                 :due_date, :remediation_plan, :validation_note, :updated_by, :updated_at)
+            ON CONFLICT (vendor_id, finding_key) DO UPDATE SET
+                finding_type=EXCLUDED.finding_type,
+                domain=EXCLUDED.domain,
+                severity=EXCLUDED.severity,
+                status=EXCLUDED.status,
+                owner=EXCLUDED.owner,
+                due_date=EXCLUDED.due_date,
+                remediation_plan=EXCLUDED.remediation_plan,
+                validation_note=EXCLUDED.validation_note,
+                updated_by=EXCLUDED.updated_by,
+                updated_at=EXCLUDED.updated_at
+        """), payload)
+    load_data.clear()
+    log_vendor_activity(
+        vendor_id,
+        "Finding remediation updated",
+        f"{payload['finding_type']} -> {payload['status']} | Owner: {payload['owner'] or 'Unassigned'}",
+        actor,
+    )
+
+
 @st.cache_data(ttl=30)
 def load_data(table_name):
     allowed = {
         "vendors", "documents", "subcontractors",
         "document_requirements", "findings", "document_files",
-        "vendor_assessments",
+        "vendor_assessments", "vendor_case_state", "vendor_case_notes",
+        "vendor_finding_actions", "vendor_activity_log",
     }
     if table_name not in allowed or not table_exists(table_name):
         return pd.DataFrame()
@@ -1261,6 +1447,7 @@ def generate_findings(vendor, documents, subcontractors, requirements):
 
 ensure_document_files_table()
 ensure_vendor_assessments_table()
+ensure_vendor_case_tables()
 default_dataset_restored = restore_default_dataset_if_needed()
 
 vendors = load_data("vendors")
@@ -1328,7 +1515,7 @@ if st.sidebar.button("Sign out", use_container_width=True, key="entra_signout"):
     st.logout()
 
 all_pages = [
-    "Executive Dashboard", "Vendor Portfolio", "Risk Register",
+    "Executive Dashboard", "Vendor Portfolio", "Vendor Case Workspace", "Risk Register",
     "Findings & Remediation", "Fourth-Party Risk", "Document Compliance",
     "Sample Document Library", "Assessment Simulation",
     "IT Risk / GRC Practice Lab", "Data Import",
@@ -1864,6 +2051,278 @@ elif menu == "Vendor Portfolio":
                     unsafe_allow_html=True,
                 )
         st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# VENDOR CASE WORKSPACE
+# ============================================================
+
+elif menu == "Vendor Case Workspace":
+
+    page_header(
+        "Third-Party Risk Operations",
+        "Vendor Case Workspace",
+        "Work a vendor case end-to-end: assess risk, review evidence, manage findings, track remediation and record the risk decision.",
+    )
+
+    if vendors.empty:
+        st.info("No vendor dataset is available.")
+        st.stop()
+
+    actor = entra_email or entra_name or "Authenticated user"
+    vendor_names = vendors["name"].astype(str).tolist()
+    default_case_vendor = st.session_state.get("case_vendor_name")
+    default_idx = vendor_names.index(default_case_vendor) if default_case_vendor in vendor_names else 0
+
+    selected_case_vendor = st.selectbox(
+        "Active vendor case", vendor_names, index=default_idx, key="vendor_case_selector"
+    )
+    st.session_state["case_vendor_name"] = selected_case_vendor
+    vendor = vendors[vendors["name"].astype(str) == str(selected_case_vendor)]
+    if vendor.empty:
+        st.stop()
+
+    v = vendor.iloc[0]
+    vendor_id = int(v["vendor_id"])
+    risk = risk_engine(vendor, documents, subcontractors, requirements)
+    generated_findings = generate_findings(vendor, documents, subcontractors, requirements)
+
+    case_states = load_data("vendor_case_state")
+    state_match = case_states[case_states["vendor_id"] == vendor_id] if not case_states.empty else pd.DataFrame()
+    case_state = state_match.iloc[-1].to_dict() if not state_match.empty else {}
+    case_status = str(case_state.get("case_status", "In Review") or "In Review")
+    risk_decision = str(case_state.get("risk_decision", "Further review") or "Further review")
+
+    finding_actions = load_data("vendor_finding_actions")
+    vendor_actions = finding_actions[finding_actions["vendor_id"] == vendor_id].copy() if not finding_actions.empty else pd.DataFrame()
+    tracked_open = 0
+    if not vendor_actions.empty and "status" in vendor_actions.columns:
+        tracked_open = int((~vendor_actions["status"].astype(str).isin(["Closed", "Accepted"])).sum())
+    open_findings = max(len(generated_findings), tracked_open)
+
+    st.markdown(
+        f'''<div class="console-card">
+            <div class="console-kicker">ACTIVE TPRM CASE - {case_status}</div>
+            <div style="display:flex;justify-content:space-between;gap:2rem;align-items:center;">
+                <div>
+                    <div class="console-title">{v["name"]}</div>
+                    <div class="console-copy">{v.get("service_type", "Third-party service")} - {v.get("data_accessed", "Data scope not recorded")}<br>
+                    Case owner context: <strong>{v.get("relationship_owner", v.get("business_owner", "First Line / Relationship Owner"))}</strong></div>
+                </div>
+                <div style="text-align:right;">
+                    <div class="console-score" style="font-size:1.8rem;">{risk["final_residual"]}</div>
+                    <div class="console-score-label">Final Residual Risk</div>
+                    <div style="margin-top:.4rem;">{badge(risk["level"])}</div>
+                </div>
+            </div>
+        </div>''',
+        unsafe_allow_html=True,
+    )
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Criticality", risk["criticality_tier"])
+    k2.metric("Inherent Risk", risk["inherent_level"])
+    k3.metric("Evidence Coverage", f'{risk["compliance"]["percentage"]}%')
+    k4.metric("Open Findings", open_findings)
+    k5.metric("Decision", risk_decision)
+
+    tabs = st.tabs(["Overview", "Assessment", "Evidence", "Findings", "Remediation", "Decision", "Activity"])
+
+    with tabs[0]:
+        left, right = st.columns([1.1, .9])
+        with left:
+            st.markdown('<div class="section-card"><div class="section-title">Case Snapshot</div>', unsafe_allow_html=True)
+            st.markdown(
+                f'''<div class="signal"><span class="signal-name">Service</span><span class="signal-value">{v.get("service_type", "-")}</span></div>
+                <div class="signal"><span class="signal-name">Vendor status</span><span class="signal-value">{v.get("status", "-")}</span></div>
+                <div class="signal"><span class="signal-name">Onboarded</span><span class="signal-value">{v.get("onboarded_date", "-")}</span></div>
+                <div class="signal"><span class="signal-name">Contract end</span><span class="signal-value">{v.get("contract_end_date", "-")}</span></div>
+                <div class="signal"><span class="signal-name">Assessment quality</span><span class="signal-value">{risk["assessment_quality"]}</span></div>''',
+                unsafe_allow_html=True,
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-card"><div class="section-title">Working Notes</div>', unsafe_allow_html=True)
+            with st.form(f"case_note_{vendor_id}", clear_on_submit=True):
+                note_type = st.selectbox("Note type", ["Analyst", "Evidence", "Vendor contact", "Decision"])
+                note_text = st.text_area("Case note", placeholder="Record what happened, what you reviewed, and what should happen next.")
+                if st.form_submit_button("Add case note", type="primary"):
+                    if note_text.strip():
+                        add_vendor_case_note(vendor_id, note_type, note_text, actor)
+                        st.success("Case note saved to the persistent workspace.")
+                        st.rerun()
+                    else:
+                        st.warning("Write a note before saving.")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with right:
+            st.markdown('<div class="section-card"><div class="section-title">Risk Lifecycle</div>', unsafe_allow_html=True)
+            st.markdown(
+                f'''<div class="signal"><span class="signal-name">Criticality</span><span class="signal-value">{risk["criticality_tier"]}</span></div>
+                <div class="signal"><span class="signal-name">Inherent Risk</span><span class="signal-value">{risk["inherent_level"]} - {risk["inherent_score"]}/15</span></div>
+                <div class="signal"><span class="signal-name">Control Effectiveness</span><span class="signal-value">{risk["control_effectiveness"]}</span></div>
+                <div class="signal"><span class="signal-name">Calculated Residual</span><span class="signal-value">{risk["calculated_residual"]}</span></div>
+                <div class="signal"><span class="signal-name">Final Residual</span><span class="signal-value">{risk["final_residual"]}</span></div>
+                <div class="signal"><span class="signal-name">Monitoring</span><span class="signal-value">{risk["monitoring"]}</span></div>''',
+                unsafe_allow_html=True,
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
+            next_action = str(case_state.get("next_action", "") or "")
+            target_date = str(case_state.get("target_date", "") or "")
+            st.markdown('<div class="section-card"><div class="section-title">Next Action</div>', unsafe_allow_html=True)
+            if next_action:
+                st.write(next_action)
+                st.caption(f"Target date: {target_date or 'Not set'}")
+            else:
+                st.info("No next action recorded yet. Set it in the Decision tab.")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    with tabs[1]:
+        st.subheader("Assessment & scoring")
+        st.caption("The case workspace reuses the same explainable assessment model as Vendor Portfolio.")
+        saved = assessment_row(vendor_id)
+        score_options = [None, 0, 1, 2, 3]
+        score_labels = {None: "Review Required", 0: "0 - None / negligible", 1: "1 - Limited", 2: "2 - Significant", 3: "3 - Severe"}
+        def case_saved_index(field):
+            value = saved.get(field)
+            return score_options.index(int(value)) if valid_assessment_value(value) else 0
+        with st.form(f"case_assessment_{vendor_id}"):
+            st.markdown("**Criticality factors**")
+            criticality_values = {}
+            crit_cols = st.columns(2)
+            for index, field in enumerate(CRITICALITY_FIELDS):
+                with crit_cols[index % 2]:
+                    criticality_values[field] = st.selectbox(FIELD_LABELS[field], score_options, index=case_saved_index(field), format_func=lambda value: score_labels[value], key=f"case_{field}_{vendor_id}")
+            st.markdown("**Inherent-risk factors**")
+            inherent_values = {}
+            inherent_cols = st.columns(2)
+            for index, field in enumerate(INHERENT_FIELDS):
+                with inherent_cols[index % 2]:
+                    inherent_values[field] = st.selectbox(FIELD_LABELS[field], score_options, index=case_saved_index(field), format_func=lambda value: score_labels[value], key=f"case_{field}_{vendor_id}")
+            st.markdown("**Human override - optional**")
+            override_options = ["No override", "Low", "Medium", "High", "Critical"]
+            current_override = str(saved.get("override_rating", "") or "")
+            override_default = override_options.index(current_override) if current_override in override_options else 0
+            override_rating = st.selectbox("Final rating override", override_options, index=override_default)
+            override_reason = st.text_area("Override reason", value=str(saved.get("override_reason", "") or ""))
+            override_review_date = st.text_input("Override review date", value=str(saved.get("override_review_date", "") or ""), placeholder="YYYY-MM-DD")
+            if st.form_submit_button("Save assessment", type="primary"):
+                if override_rating != "No override" and not override_reason.strip():
+                    st.error("Document the reason before applying a human override.")
+                else:
+                    save_vendor_assessment(vendor_id, {**criticality_values, **inherent_values, "override_rating": "" if override_rating == "No override" else override_rating, "override_reason": override_reason.strip(), "override_review_date": override_review_date.strip()})
+                    log_vendor_activity(vendor_id, "Assessment updated", "Risk assessment inputs were saved.", actor)
+                    st.success("Assessment saved.")
+                    st.rerun()
+
+    with tabs[2]:
+        st.subheader("Evidence & documents")
+        e1, e2, e3, e4 = st.columns(4)
+        e1.metric("Coverage", f'{risk["compliance"]["percentage"]}%')
+        e2.metric("Received", risk["compliance"]["received"])
+        e3.metric("Missing", len(risk["compliance"]["missing"]))
+        e4.metric("Expired", len(risk["compliance"]["expired"]))
+        evidence_items = []
+        for status_name, docs_list in [("Missing", risk["compliance"]["missing"]), ("Expired", risk["compliance"]["expired"]), ("Pending", risk["compliance"]["pending"])]:
+            for doc in docs_list:
+                evidence_items.append((status_name, doc))
+        if not evidence_items:
+            st.success("No evidence gaps identified for this vendor.")
+        else:
+            for status_name, doc in evidence_items:
+                attached = get_document_file(vendor_id, doc)
+                st.markdown(f'<div class="signal"><span class="signal-name">{doc}</span><span>{badge(status_name)}</span></div>', unsafe_allow_html=True)
+                with st.expander(f"Evidence record - {doc}"):
+                    if attached is not None:
+                        st.caption(f"Attached: {attached['filename']} - {attached['uploaded_at']}")
+                        render_file_preview(attached, height=320)
+                    up = st.file_uploader("Attach evidence", type=["pdf", "png", "jpg", "jpeg"], key=f"case_upload_{vendor_id}_{doc}")
+                    if up is not None and st.button("Save evidence", key=f"save_case_evidence_{vendor_id}_{doc}"):
+                        save_document_file(vendor_id, doc, up.name, up.type, up.getvalue())
+                        log_vendor_activity(vendor_id, "Evidence attached", f"{doc}: {up.name}", actor)
+                        st.success("Evidence saved.")
+                        st.rerun()
+
+    with tabs[3]:
+        st.subheader("Findings")
+        st.caption("Findings are derived from the current evidence, fourth-party and contract posture. Remediation tracking is persisted separately.")
+        if not generated_findings:
+            st.success("No findings generated for this vendor.")
+        else:
+            for idx, finding in enumerate(generated_findings, start=1):
+                finding_key = f"{finding.get('finding_type', '')}|{finding.get('domain', '')}"
+                tracked = vendor_actions[vendor_actions["finding_key"] == finding_key] if not vendor_actions.empty else pd.DataFrame()
+                tracked_status = tracked.iloc[-1]["status"] if not tracked.empty else "Open"
+                st.markdown(f'''<div class="finding {str(finding["severity"]).lower()}"><div class="finding-title">F-{idx:03d} - {finding["severity"]} - {finding["finding_type"]}</div><div class="finding-detail">{finding["domain"]} - {finding["description"]}</div><div class="finding-detail">Rationale: {finding["rationale"]}</div><div class="finding-detail">Workflow status: {tracked_status}</div></div>''', unsafe_allow_html=True)
+
+    with tabs[4]:
+        st.subheader("Remediation tracking")
+        if not generated_findings:
+            st.success("There are no generated findings requiring remediation.")
+        else:
+            for idx, finding in enumerate(generated_findings, start=1):
+                finding_key = f"{finding.get('finding_type', '')}|{finding.get('domain', '')}"
+                tracked = vendor_actions[vendor_actions["finding_key"] == finding_key] if not vendor_actions.empty else pd.DataFrame()
+                existing = tracked.iloc[-1].to_dict() if not tracked.empty else {}
+                status_options = ["Open", "Remediation in progress", "Evidence submitted", "Validation", "Closed", "Accepted"]
+                existing_status = str(existing.get("status", "Open") or "Open")
+                status_index = status_options.index(existing_status) if existing_status in status_options else 0
+                with st.expander(f"F-{idx:03d} - {finding['finding_type']} - {finding['severity']}", expanded=(idx == 1)):
+                    with st.form(f"remediation_{vendor_id}_{idx}"):
+                        c1, c2, c3 = st.columns([1, 1, 1])
+                        with c1:
+                            remediation_status = st.selectbox("Status", status_options, index=status_index, key=f"rem_status_{vendor_id}_{idx}")
+                        with c2:
+                            owner = st.text_input("Owner", value=str(existing.get("owner", "") or ""), placeholder="Vendor Security Team / Relationship Owner")
+                        with c3:
+                            due_date = st.text_input("Due date", value=str(existing.get("due_date", "") or ""), placeholder="YYYY-MM-DD")
+                        remediation_plan = st.text_area("Remediation plan", value=str(existing.get("remediation_plan", "") or ""), placeholder="What must change and what evidence will demonstrate closure?")
+                        validation_note = st.text_area("Validation / closure evidence", value=str(existing.get("validation_note", "") or ""), placeholder="Record evidence reviewed before closure.")
+                        if st.form_submit_button("Save remediation", type="primary"):
+                            save_finding_action(vendor_id, finding, {"status": remediation_status, "owner": owner.strip(), "due_date": due_date.strip(), "remediation_plan": remediation_plan.strip(), "validation_note": validation_note.strip()}, actor)
+                            st.success("Remediation record saved.")
+                            st.rerun()
+
+    with tabs[5]:
+        st.subheader("Residual risk decision")
+        st.caption("Record the analyst / risk-owner disposition after considering assessment results, evidence and open findings.")
+        decision_options = ["Further review", "Approve", "Approve with conditions", "Risk acceptance required", "Reject"]
+        status_options = ["Not Started", "In Review", "Awaiting Vendor", "Awaiting Risk Owner", "Approved", "Closed"]
+        current_decision = str(case_state.get("risk_decision", "Further review") or "Further review")
+        current_status = str(case_state.get("case_status", "In Review") or "In Review")
+        with st.form(f"case_decision_{vendor_id}"):
+            d1, d2 = st.columns(2)
+            with d1:
+                decision = st.selectbox("Risk decision", decision_options, index=decision_options.index(current_decision) if current_decision in decision_options else 0)
+                decision_owner = st.text_input("Decision owner", value=str(case_state.get("decision_owner", "") or ""), placeholder="ICT Risk Owner / Business Owner")
+            with d2:
+                new_case_status = st.selectbox("Case status", status_options, index=status_options.index(current_status) if current_status in status_options else 1)
+                target_date = st.text_input("Target / review date", value=str(case_state.get("target_date", "") or ""), placeholder="YYYY-MM-DD")
+            rationale = st.text_area("Decision rationale", value=str(case_state.get("decision_rationale", "") or ""), placeholder="Why is this disposition appropriate given residual risk and outstanding actions?")
+            next_action = st.text_area("Next action", value=str(case_state.get("next_action", "") or ""), placeholder="e.g. Vendor to provide MFA policy export; analyst to validate by target date.")
+            st.markdown(f'''<div class="treatment-card"><div class="treatment-title">Model recommendation - {risk["treatment"]}</div><div class="treatment-copy">Current final residual risk: {risk["final_residual"]}. {risk["treatment_copy"]}</div></div>''', unsafe_allow_html=True)
+            if st.form_submit_button("Save risk decision", type="primary"):
+                if decision != "Further review" and not rationale.strip():
+                    st.error("Add a rationale before recording a final disposition.")
+                else:
+                    save_vendor_case_state(vendor_id, {"case_status": new_case_status, "risk_decision": decision, "decision_rationale": rationale.strip(), "decision_owner": decision_owner.strip(), "next_action": next_action.strip(), "target_date": target_date.strip()}, actor)
+                    st.success("Risk decision saved.")
+                    st.rerun()
+
+    with tabs[6]:
+        st.subheader("Activity & audit trail")
+        activity = load_data("vendor_activity_log")
+        vendor_activity = activity[activity["vendor_id"] == vendor_id].copy() if not activity.empty else pd.DataFrame()
+        notes = load_data("vendor_case_notes")
+        vendor_notes = notes[notes["vendor_id"] == vendor_id].copy() if not notes.empty else pd.DataFrame()
+        a1, a2 = st.columns(2)
+        a1.metric("Recorded activities", len(vendor_activity))
+        a2.metric("Case notes", len(vendor_notes))
+        if vendor_activity.empty:
+            st.info("No recorded case activity yet. Save an assessment, note, remediation item or decision to create the audit trail.")
+        else:
+            vendor_activity = vendor_activity.sort_values("activity_id", ascending=False)
+            for _, event in vendor_activity.iterrows():
+                st.markdown(f'''<div class="section-card" style="padding:.75rem 1rem;margin-bottom:.5rem;"><div class="section-title" style="margin-bottom:.25rem;">{event.get("activity_type", "Activity")}</div><div style="font-size:.85rem;">{event.get("activity_detail", "")}</div><div style="font-size:.72rem;color:#687086;margin-top:.35rem;">{event.get("created_at", "")} - {event.get("actor", "Authenticated user")}</div></div>''', unsafe_allow_html=True)
 
 
 # ============================================================
