@@ -1,5 +1,6 @@
 import base64
 import io
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -11,6 +12,11 @@ from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import URL
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 
 # ============================================================
@@ -1517,6 +1523,178 @@ def generate_findings(vendor, documents, subcontractors, requirements):
 
 
 # ============================================================
+# AI TPRM COPILOT
+# Human-in-the-loop: recommendations never write to the database
+# until the authenticated analyst explicitly approves them.
+# ============================================================
+
+AI_CASE_STATUS_OPTIONS = ["Not Started", "In Review", "Awaiting Vendor", "Awaiting Risk Owner", "Approved", "Closed"]
+AI_RISK_DECISION_OPTIONS = ["Further review", "Approve", "Approve with conditions", "Risk acceptance required", "Reject"]
+
+
+def _clean_for_ai(value):
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, (datetime, pd.Timestamp)):
+        return str(value)
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except Exception:
+            pass
+    return value
+
+
+def _records_for_ai(df, limit=30):
+    if df is None or df.empty:
+        return []
+    return [
+        {str(k): _clean_for_ai(v) for k, v in row.items()}
+        for row in df.head(limit).to_dict(orient="records")
+    ]
+
+
+def build_ai_case_context(vendor, risk, generated_findings, case_state, vendor_actions, documents, subcontractors):
+    """Build a compact vendor-scoped packet. Secrets and database credentials are never included."""
+    vendor_id = int(vendor.get("vendor_id"))
+    vendor_docs = documents[documents["vendor_id"] == vendor_id].copy() if not documents.empty and "vendor_id" in documents.columns else pd.DataFrame()
+    vendor_subs = subcontractors[subcontractors["vendor_id"] == vendor_id].copy() if not subcontractors.empty and "vendor_id" in subcontractors.columns else pd.DataFrame()
+
+    findings = []
+    for idx, finding in enumerate(generated_findings, start=1):
+        finding_key = f"{finding.get('finding_type', '')}|{finding.get('domain', '')}"
+        tracked = vendor_actions[vendor_actions["finding_key"] == finding_key] if not vendor_actions.empty and "finding_key" in vendor_actions.columns else pd.DataFrame()
+        latest = tracked.iloc[-1].to_dict() if not tracked.empty else {}
+        findings.append({
+            "finding_id": f"F-{idx:03d}",
+            "finding_type": finding.get("finding_type"),
+            "domain": finding.get("domain"),
+            "severity": finding.get("severity"),
+            "description": finding.get("description"),
+            "rationale": finding.get("rationale"),
+            "remediation_status": latest.get("status", "Open"),
+            "remediation_owner": latest.get("owner", ""),
+            "due_date": latest.get("due_date", ""),
+            "remediation_plan": latest.get("remediation_plan", ""),
+            "validation_note": latest.get("validation_note", ""),
+        })
+
+    return {
+        "vendor": {str(k): _clean_for_ai(v) for k, v in vendor.to_dict().items()},
+        "risk_engine": {
+            "criticality_tier": risk.get("criticality_tier"),
+            "inherent_level": risk.get("inherent_level"),
+            "inherent_score": risk.get("inherent_score"),
+            "control_effectiveness": risk.get("control_effectiveness"),
+            "calculated_residual": risk.get("calculated_residual"),
+            "final_residual": risk.get("final_residual"),
+            "treatment": risk.get("treatment"),
+            "treatment_copy": risk.get("treatment_copy"),
+            "monitoring": risk.get("monitoring"),
+            "assessment_quality": risk.get("assessment_quality"),
+            "evidence_coverage_pct": risk.get("compliance", {}).get("percentage"),
+            "missing_evidence": risk.get("compliance", {}).get("missing", []),
+            "expired_evidence": risk.get("compliance", {}).get("expired", []),
+            "pending_evidence": risk.get("compliance", {}).get("pending", []),
+        },
+        "current_case_state": {str(k): _clean_for_ai(v) for k, v in case_state.items()},
+        "findings": findings,
+        "document_records": _records_for_ai(vendor_docs, 25),
+        "fourth_parties": _records_for_ai(vendor_subs, 20),
+    }
+
+
+AI_REVIEW_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "case_summary": {"type": "string"},
+        "risk_explanation": {"type": "string"},
+        "recommendation": {"type": "string"},
+        "confidence": {"type": "string", "enum": ["Low", "Medium", "High"]},
+        "evidence_gaps": {"type": "array", "items": {"type": "string"}},
+        "risk_challenges": {"type": "array", "items": {"type": "string"}},
+        "proposed_case_status": {"type": "string", "enum": AI_CASE_STATUS_OPTIONS},
+        "proposed_risk_decision": {"type": "string", "enum": AI_RISK_DECISION_OPTIONS},
+        "proposed_next_action": {"type": "string"},
+        "proposed_rationale": {"type": "string"},
+    },
+    "required": [
+        "case_summary", "risk_explanation", "recommendation", "confidence",
+        "evidence_gaps", "risk_challenges", "proposed_case_status",
+        "proposed_risk_decision", "proposed_next_action", "proposed_rationale"
+    ],
+}
+
+
+AI_COPILOT_INSTRUCTIONS = """
+You are a senior Third-Party Risk Management (TPRM) analyst copilot working in a regulated financial-services environment.
+Review only the case data supplied by the application. Do not invent vendor facts, evidence, control effectiveness, regulatory compliance, or remediation evidence.
+
+Your job is to summarize the case, explain the key risk logic, challenge weak assumptions, recommend a practical next step, and propose a case status, risk decision, next action, and decision rationale for human review.
+
+Rules:
+- Missing evidence is uncertainty, not proof that a control is effective or ineffective.
+- Do not recommend closing a material finding without adequate validation evidence.
+- Be proportionate to vendor criticality and actual case facts.
+- If information is insufficient, prefer Further review / Awaiting Vendor over unsupported approval.
+- Distinguish facts from analytical judgment.
+- The recommendation is advisory. A human analyst remains accountable and must explicitly approve every database change.
+- Keep the output concise enough to scan in an operational case-management screen.
+""".strip()
+
+
+def run_ai_case_review(case_context):
+    if OpenAI is None:
+        raise RuntimeError("The OpenAI Python package is not installed. Add 'openai' to requirements.txt and redeploy.")
+    api_key = st.secrets.get("OPENAI_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not configured in Streamlit Secrets.")
+    model = st.secrets.get("OPENAI_MODEL", "gpt-5.6-luna")
+    client = OpenAI(api_key=api_key)
+    response = client.responses.create(
+        model=model,
+        instructions=AI_COPILOT_INSTRUCTIONS,
+        input="Review this TPRM vendor case and return the structured analyst recommendation.\n\nCASE DATA:\n" + json.dumps(case_context, ensure_ascii=False, default=str),
+        text={
+            "format": {
+                "type": "json_schema",
+                "name": "tprm_case_review",
+                "description": "Structured human-in-the-loop TPRM case recommendation.",
+                "schema": AI_REVIEW_SCHEMA,
+                "strict": True,
+            }
+        },
+        store=False,
+    )
+    return json.loads(response.output_text)
+
+
+def apply_ai_case_recommendation(vendor_id, case_state, review, actor):
+    """Apply controlled AI-proposed fields only after explicit analyst approval."""
+    values = {
+        "case_status": review["proposed_case_status"],
+        "risk_decision": review["proposed_risk_decision"],
+        "decision_rationale": review["proposed_rationale"],
+        "decision_owner": str(case_state.get("decision_owner", "") or actor),
+        "next_action": review["proposed_next_action"],
+        "target_date": str(case_state.get("target_date", "") or ""),
+    }
+    save_vendor_case_state(vendor_id, values, actor)
+    log_vendor_activity(
+        vendor_id,
+        "AI recommendation approved",
+        f"Human-approved Copilot recommendation applied: status={values['case_status']}; decision={values['risk_decision']}.",
+        actor,
+    )
+
+
+# ============================================================
 # LOAD DATA
 # ============================================================
 
@@ -2199,7 +2377,7 @@ elif menu == "Vendor Case Workspace":
     k4.metric("Open Findings", open_findings)
     k5.metric("Decision", risk_decision)
 
-    tabs = st.tabs(["Overview", "Assessment", "Evidence", "Findings", "Remediation", "Decision", "Activity"])
+    tabs = st.tabs(["Overview", "Assessment", "Evidence", "Findings", "Remediation", "Decision", "AI Copilot", "Activity"])
 
     with tabs[0]:
         left, right = st.columns([1.1, .9])
@@ -2383,6 +2561,96 @@ elif menu == "Vendor Case Workspace":
                     st.rerun()
 
     with tabs[6]:
+        st.subheader("AI Analyst Copilot")
+        st.caption("The Copilot reviews the current vendor case and proposes a recommendation. Nothing is changed until you explicitly approve it.")
+
+        api_ready = bool(st.secrets.get("OPENAI_API_KEY", "")) and OpenAI is not None
+        if not api_ready:
+            st.info("AI Copilot is ready in the app, but the OpenAI API connection is not configured yet.")
+            if OpenAI is None:
+                st.code("Add to requirements.txt:\nopenai", language="text")
+            if not st.secrets.get("OPENAI_API_KEY", ""):
+                st.code('Add to Streamlit Secrets:\nOPENAI_API_KEY = "your-key"\n# optional\nOPENAI_MODEL = "gpt-5.6-luna"', language="toml")
+        else:
+            review_key = f"ai_case_review_{vendor_id}"
+            run_col, clear_col = st.columns([1, .35])
+            if run_col.button("Run AI Case Review", type="primary", use_container_width=True, key=f"run_ai_review_{vendor_id}"):
+                with st.spinner("Reviewing assessment, evidence, findings and current disposition..."):
+                    try:
+                        context = build_ai_case_context(v, risk, generated_findings, case_state, vendor_actions, documents, subcontractors)
+                        review = run_ai_case_review(context)
+                        st.session_state[review_key] = review
+                        log_vendor_activity(vendor_id, "AI case review generated", "Copilot generated an advisory case review. No case data was changed.", actor)
+                    except Exception as exc:
+                        st.error(f"AI review could not be completed: {exc}")
+            if clear_col.button("Clear review", use_container_width=True, key=f"clear_ai_review_{vendor_id}"):
+                st.session_state.pop(review_key, None)
+                st.rerun()
+
+            review = st.session_state.get(review_key)
+            if review:
+                c1, c2 = st.columns([1.25, .75])
+                with c1:
+                    st.markdown("#### Case summary")
+                    st.write(review.get("case_summary", ""))
+                    st.markdown("#### Why the Copilot sees it this way")
+                    st.write(review.get("risk_explanation", ""))
+                    st.markdown("#### Recommendation")
+                    st.info(review.get("recommendation", ""))
+                with c2:
+                    st.metric("AI confidence", review.get("confidence", "-"))
+                    gaps = review.get("evidence_gaps", [])
+                    challenges = review.get("risk_challenges", [])
+                    st.markdown("**Evidence gaps**")
+                    if gaps:
+                        for item in gaps:
+                            st.markdown(f"- {item}")
+                    else:
+                        st.caption("No material evidence gaps identified.")
+                    st.markdown("**Risk challenge**")
+                    if challenges:
+                        for item in challenges:
+                            st.markdown(f"- {item}")
+                    else:
+                        st.caption("No material challenge identified.")
+
+                st.markdown("#### Proposed change")
+                current_status_display = str(case_state.get("case_status", "In Review") or "In Review")
+                current_decision_display = str(case_state.get("risk_decision", "Further review") or "Further review")
+                current_next_action = str(case_state.get("next_action", "") or "Not recorded")
+                p1, p2 = st.columns(2)
+                with p1:
+                    st.markdown(f"**Case status**  \n`{current_status_display}` → `{review.get('proposed_case_status', current_status_display)}`")
+                    st.markdown(f"**Risk decision**  \n`{current_decision_display}` → `{review.get('proposed_risk_decision', current_decision_display)}`")
+                with p2:
+                    st.markdown("**Next action**")
+                    st.caption(f"Current: {current_next_action}")
+                    st.write(review.get("proposed_next_action", ""))
+                st.markdown("**Proposed rationale**")
+                st.write(review.get("proposed_rationale", ""))
+
+                st.warning("Human approval required. Approving will update the case status, risk decision, next action and decision rationale in Supabase, and the action will be recorded in the audit trail.")
+                approve_col, reject_col = st.columns(2)
+                if approve_col.button("Approve & Apply Recommendation", type="primary", use_container_width=True, key=f"approve_ai_{vendor_id}"):
+                    try:
+                        apply_ai_case_recommendation(vendor_id, case_state, review, actor)
+                        st.session_state.pop(review_key, None)
+                        st.success("Recommendation approved and applied. Audit trail updated.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Recommendation could not be applied: {exc}")
+                if reject_col.button("Reject Recommendation", use_container_width=True, key=f"reject_ai_{vendor_id}"):
+                    log_vendor_activity(vendor_id, "AI recommendation rejected", "Analyst reviewed and rejected the Copilot recommendation. No case data was changed.", actor)
+                    st.session_state.pop(review_key, None)
+                    st.success("Recommendation rejected. No case data was changed.")
+                    st.rerun()
+            else:
+                st.markdown(
+                    '<div class="section-card"><div class="section-title">How it works</div><div style="font-size:.88rem;line-height:1.6;">The Copilot reads only the active vendor case context, summarizes the case, explains its risk view and proposes a controlled change. The analyst decides whether to apply it. The AI cannot update the database on its own.</div></div>',
+                    unsafe_allow_html=True,
+                )
+
+    with tabs[7]:
         st.subheader("Activity & audit trail")
         vendor_activity = load_vendor_rows("vendor_activity_log", vendor_id).copy()
         vendor_notes = load_vendor_rows("vendor_case_notes", vendor_id).copy()
