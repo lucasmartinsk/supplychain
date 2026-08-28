@@ -4,3 +4,5 @@ reportlab
 openpyxl
 Authlib>=1.3.2
 httpx
+sqlalchemy
+psycopg2-binary
