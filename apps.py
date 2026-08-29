@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -19,11 +20,6 @@ except ImportError:
     OpenAI = None
 
 
-# ============================================================
-# TPRM RISK LAB - V3
-# Vendor Risk - Evidence - Findings - Fourth Parties - Sample Docs
-# Training / Portfolio Project
-# ============================================================
 
 DEFAULT_DATASET_NAME = "TPRM_Risk_Lab_20_Fictional_Vendor_Cases.xlsx"
 
@@ -35,9 +31,6 @@ REQUIRED_SHEETS = {
     "findings",
 }
 
-# ============================================================
-# PAGE CONFIG
-# ============================================================
 
 st.set_page_config(
     page_title="IT Risk / GRC Lab",
@@ -47,17 +40,8 @@ st.set_page_config(
 )
 
 
-# ============================================================
-# MICROSOFT ENTRA ID AUTHENTICATION
-# OIDC credentials live in Streamlit Secrets under [auth].
-# No client secret is stored in this source file.
-# ============================================================
 
 def require_microsoft_login():
-    """Block the workspace until a Microsoft Entra ID session is authenticated."""
-    # st.login/st.logout were introduced in Streamlit 1.42.0.
-    # st.user became generally available in 1.45.0; older compatible
-    # versions expose the same OIDC identity through st.experimental_user.
     if not hasattr(st, "login"):
         st.error(
             "This app needs Streamlit 1.42.0 or newer for Microsoft Entra ID login. "
@@ -121,13 +105,6 @@ def require_microsoft_login():
 require_microsoft_login()
 
 
-# ============================================================
-# DESIGN SYSTEM - "SIGNAL ROOM"
-# Dark analyst-console theme. Monospace for data/numbers,
-# sans-serif for prose. Sharp corners, restrained accent color,
-# muted (not neon) severity palette. Intentionally not another
-# generic light SaaS dashboard template.
-# ============================================================
 
 st.markdown(
     """
@@ -372,23 +349,9 @@ st.markdown(
 )
 
 
-# ============================================================
-# DATABASE - PERSISTENT POSTGRESQL (SUPABASE)
-# Query cache + selective invalidation reduce remote DB round trips
-# ============================================================
 
 @st.cache_resource
 def get_engine():
-    """Create one pooled PostgreSQL engine from Streamlit Secrets.
-
-    Expected secret section:
-        [connections.tprm_db]
-        host = "..."
-        port = "5432"
-        database = "postgres"
-        username = "postgres"
-        password = "..."
-    """
     try:
         cfg = st.secrets["connections"]["tprm_db"]
     except Exception as exc:
@@ -438,7 +401,6 @@ def ensure_document_files_table():
 
 @st.cache_resource
 def ensure_vendor_assessments_table():
-    """Stores explainable, vendor-level inputs without changing the source workbook."""
     with get_engine().begin() as conn:
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS vendor_assessments (
@@ -462,7 +424,6 @@ def ensure_vendor_assessments_table():
 
 @st.cache_resource
 def ensure_vendor_case_tables():
-    """Persistent case-management state for the end-to-end Vendor Case Workspace."""
     with get_engine().begin() as conn:
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS vendor_case_state (
@@ -601,7 +562,6 @@ def add_vendor_case_note(vendor_id, note_type, note_text, actor):
 
 
 def delete_vendor_case_note(vendor_id, note_id, actor):
-    """Delete the note content while preserving a deletion event in the audit trail."""
     ensure_vendor_case_tables()
     with get_engine().begin() as conn:
         row = conn.execute(
@@ -708,7 +668,6 @@ def _data_revision(table_name):
 
 
 def invalidate_data(*table_names):
-    """Invalidate only the tables that changed instead of flushing every cached query."""
     for table_name in table_names:
         key = f"_db_rev_{table_name}"
         st.session_state[key] = int(st.session_state.get(key, 0)) + 1
@@ -736,7 +695,6 @@ def save_table(df, table_name, connection=None):
 
 
 def save_dataset_tables(sheets):
-    """Replace the active imported dataset in one PostgreSQL transaction."""
     with get_engine().begin() as conn:
         for table_name in ["vendors", "documents", "subcontractors", "document_requirements"]:
             save_table(sheets[table_name], table_name, connection=conn)
@@ -749,11 +707,6 @@ def save_dataset_tables(sheets):
 
 @st.cache_resource
 def restore_default_dataset_if_needed():
-    """Seed PostgreSQL only when no persistent vendor dataset exists yet.
-
-    Once an Excel workbook has been committed, the remote database remains the
-    source of truth across Streamlit reboots/container resets.
-    """
     if table_exists("vendors"):
         existing = load_data("vendors")
         if not existing.empty:
@@ -860,8 +813,6 @@ def get_document_file(vendor_id, doc_type):
 
 
 def render_file_preview(row, height=420):
-    """Renders a PDF inline via embedded base64 iframe, or an image directly,
-    or a generic download button for other file types."""
     file_bytes = base64.b64decode(row["file_b64"])
     content_type = row.get("content_type", "") or ""
 
@@ -890,9 +841,6 @@ def render_file_preview(row, height=420):
     )
 
 
-# ============================================================
-# HELPERS
-# ============================================================
 
 def normalize_columns(df):
     df = df.copy()
@@ -934,7 +882,6 @@ def days_to_contract_end(value):
 
 
 def contract_watch_item(contract_days):
-    """Creates a non-scoring operational alert before contract expiry."""
     if contract_days is None or contract_days > 90 or contract_days < 0:
         return None
     if contract_days <= 30:
@@ -952,15 +899,12 @@ def contract_watch_item(contract_days):
     return {
         "status": status,
         "days": contract_days,
-        "owner": "Relationship Owner â€” First Line",
+        "owner": "Relationship Owner - First Line",
         "action": action,
         "risk_impact": "None unless the review identifies an actual issue",
     }
 
 
-# ============================================================
-# MOCK / ILLUSTRATIVE SAMPLE DOCUMENTS
-# ============================================================
 
 MOCK_TEMPLATES = {
     "ISO 27001 Certificate": {
@@ -1036,12 +980,6 @@ MOCK_TEMPLATES = {
 
 
 def generate_mock_document(doc_type):
-    """
-    Generates an illustrative, clearly-watermarked SAMPLE PDF so someone who
-    has never seen a real ISO 27001 / SOC 2 / DPA / BCP document can
-    understand its typical structure. This is NOT a valid certificate or
-    legal document of any kind - every page carries a disclaimer.
-    """
     template = MOCK_TEMPLATES.get(doc_type)
     if template is None:
         return None
@@ -1090,19 +1028,8 @@ def generate_mock_document(doc_type):
     return buf.read()
 
 
-# ============================================================
-# DOCUMENT ENGINE
-# ============================================================
 
 def document_status(vendor_id, doc_type, documents):
-    """
-    Returns: 'Received', 'Pending', 'Expired', or 'Missing'.
-
-    A document whose latest row has status 'Received' but whose
-    expiry_date has already passed is reported as 'Expired', not
-    silently as 'Missing' - the two mean different things for
-    remediation ownership.
-    """
     rows = documents[
         (documents["vendor_id"] == vendor_id)
         & (
@@ -1209,9 +1136,6 @@ def compliance_engine(vendor, documents, requirements):
     }
 
 
-# ============================================================
-# RISK ENGINE
-# ============================================================
 
 RISK_ORDER = {"Low": 0, "Medium": 1, "High": 2, "Critical": 3, "Review Required": -1}
 
@@ -1254,22 +1178,22 @@ def valid_assessment_value(value):
 
 def legacy_tier(value):
     mapping = {
-        "critical": "Tier 1 â€” Critical",
-        "high": "Tier 2 â€” High Importance",
-        "medium": "Tier 3 â€” Moderate",
-        "low": "Tier 4 â€” Low",
+        "critical": "Tier 1 - Critical",
+        "high": "Tier 2 - High Importance",
+        "medium": "Tier 3 - Moderate",
+        "low": "Tier 4 - Low",
     }
     return mapping.get(str(value).strip().lower(), "Review Required")
 
 
 def tier_from_score(score):
     if score >= 10:
-        return "Tier 1 â€” Critical"
+        return "Tier 1 - Critical"
     if score >= 7:
-        return "Tier 2 â€” High Importance"
+        return "Tier 2 - High Importance"
     if score >= 4:
-        return "Tier 3 â€” Moderate"
-    return "Tier 4 â€” Low"
+        return "Tier 3 - Moderate"
+    return "Tier 4 - Low"
 
 
 def tier_number(tier):
@@ -1290,7 +1214,6 @@ def inherent_level(score):
 
 
 def derive_provisional_inherent(v, subs):
-    """Creates visible mock-data mappings; every derived input is labelled provisional."""
     data = str(v.get("data_accessed", "None")).strip().lower()
     service = str(v.get("service_type", "")).strip().lower()
     legacy = str(v.get("criticality", "Low")).strip().lower()
@@ -1397,8 +1320,6 @@ def control_effectiveness(findings):
     )
     if "Critical" in severities or systemic_high:
         return "Ineffective"
-    # One or more High findings must never produce a more favourable result
-    # than a single High finding. This also fixes cumulative High scenarios.
     if high_count >= 1 or medium_count >= 3:
         return "Partially Effective"
     if severities:
@@ -1454,7 +1375,7 @@ def risk_engine(vendor, documents, subcontractors, requirements):
         criticality_factors = {}
         criticality_score = None
         tier = legacy_tier(v.get("criticality"))
-        criticality_source = "Imported classification â€” complete factor assessment to verify"
+        criticality_source = "Imported classification - complete factor assessment to verify"
 
     manual_inherent = all(valid_assessment_value(saved.get(field)) for field in INHERENT_FIELDS)
     if manual_inherent:
@@ -1463,7 +1384,7 @@ def risk_engine(vendor, documents, subcontractors, requirements):
         assessment_quality = "Verified"
     else:
         inherent_factors, inherent_sources = derive_provisional_inherent(v, subs)
-        assessment_quality = "Provisional â€” review modelled inputs"
+        assessment_quality = "Provisional - review modelled inputs"
 
     inherent_score = sum(inherent_factors.values())
     inherent = inherent_level(inherent_score)
@@ -1514,19 +1435,11 @@ def risk_engine(vendor, documents, subcontractors, requirements):
     }
 
 
-# ============================================================
-# FINDINGS ENGINE
-# ============================================================
 
 def generate_findings(vendor, documents, subcontractors, requirements):
     return risk_engine(vendor, documents, subcontractors, requirements)["findings"]
 
 
-# ============================================================
-# AI TPRM COPILOT
-# Human-in-the-loop: recommendations never write to the database
-# until the authenticated analyst explicitly approves them.
-# ============================================================
 
 AI_CASE_STATUS_OPTIONS = ["Not Started", "In Review", "Awaiting Vendor", "Awaiting Risk Owner", "Approved", "Closed"]
 AI_RISK_DECISION_OPTIONS = ["Further review", "Approve", "Approve with conditions", "Risk acceptance required", "Reject"]
@@ -1560,7 +1473,6 @@ def _records_for_ai(df, limit=30):
 
 
 def build_ai_case_context(vendor, risk, generated_findings, case_state, vendor_actions, documents, subcontractors):
-    """Build a compact vendor-scoped packet. Secrets and database credentials are never included."""
     vendor_id = int(vendor.get("vendor_id"))
     vendor_docs = documents[documents["vendor_id"] == vendor_id].copy() if not documents.empty and "vendor_id" in documents.columns else pd.DataFrame()
     vendor_subs = subcontractors[subcontractors["vendor_id"] == vendor_id].copy() if not subcontractors.empty and "vendor_id" in subcontractors.columns else pd.DataFrame()
@@ -1584,6 +1496,26 @@ def build_ai_case_context(vendor, risk, generated_findings, case_state, vendor_a
             "validation_note": latest.get("validation_note", ""),
         })
 
+    missing_evidence = risk.get("compliance", {}).get("missing", []) or []
+    expired_evidence = risk.get("compliance", {}).get("expired", []) or []
+    pending_evidence = risk.get("compliance", {}).get("pending", []) or []
+    closed_statuses = {"closed", "resolved", "validated", "complete", "completed"}
+    active_findings = [
+        finding for finding in findings
+        if str(finding.get("remediation_status", "Open")).strip().lower() not in closed_statuses
+    ]
+    explicit_vendor_evidence_reasons = [
+        *[f"Missing evidence: {item}" for item in missing_evidence],
+        *[f"Expired evidence: {item}" for item in expired_evidence],
+        *[f"Pending evidence: {item}" for item in pending_evidence],
+        *[
+            f"Open finding requires remediation validation: {finding.get('finding_id')} - {finding.get('description')}"
+            for finding in active_findings
+        ],
+    ]
+    assessment_quality = str(risk.get("assessment_quality", "") or "")
+    assessment_is_provisional = assessment_quality.lower().startswith("provisional")
+
     return {
         "vendor": {str(k): _clean_for_ai(v) for k, v in vendor.to_dict().items()},
         "risk_engine": {
@@ -1598,14 +1530,22 @@ def build_ai_case_context(vendor, risk, generated_findings, case_state, vendor_a
             "monitoring": risk.get("monitoring"),
             "assessment_quality": risk.get("assessment_quality"),
             "evidence_coverage_pct": risk.get("compliance", {}).get("percentage"),
-            "missing_evidence": risk.get("compliance", {}).get("missing", []),
-            "expired_evidence": risk.get("compliance", {}).get("expired", []),
-            "pending_evidence": risk.get("compliance", {}).get("pending", []),
+            "missing_evidence": missing_evidence,
+            "expired_evidence": expired_evidence,
+            "pending_evidence": pending_evidence,
         },
         "current_case_state": {str(k): _clean_for_ai(v) for k, v in case_state.items()},
         "findings": findings,
         "document_records": _records_for_ai(vendor_docs, 25),
         "fourth_parties": _records_for_ai(vendor_subs, 20),
+        "evidence_policy": {
+            "assessment_is_provisional": assessment_is_provisional,
+            "assessment_validation_gap": "Assessment inputs require analyst validation" if assessment_is_provisional else "",
+            "assessment_validation_basis": f"Assessment quality = {assessment_quality}" if assessment_is_provisional else "",
+            "assessment_validation_action": "Validate the modelled inputs in the Assessment tab." if assessment_is_provisional else "",
+            "explicit_vendor_evidence_reasons": explicit_vendor_evidence_reasons,
+            "vendor_evidence_required": bool(explicit_vendor_evidence_reasons),
+        },
     }
 
 
@@ -1617,6 +1557,7 @@ AI_REVIEW_SCHEMA = {
         "risk_explanation": {"type": "string"},
         "recommendation": {"type": "string"},
         "confidence": {"type": "string", "enum": ["Low", "Medium", "High"]},
+        "vendor_evidence_required": {"type": "boolean"},
         "evidence_gaps": {"type": "array", "items": {"type": "string"}},
         "risk_challenges": {"type": "array", "items": {"type": "string"}},
         "proposed_case_status": {"type": "string", "enum": AI_CASE_STATUS_OPTIONS},
@@ -1625,7 +1566,7 @@ AI_REVIEW_SCHEMA = {
         "proposed_rationale": {"type": "string"},
     },
     "required": [
-        "case_summary", "risk_explanation", "recommendation", "confidence",
+        "case_summary", "risk_explanation", "recommendation", "confidence", "vendor_evidence_required",
         "evidence_gaps", "risk_challenges", "proposed_case_status",
         "proposed_risk_decision", "proposed_next_action", "proposed_rationale"
     ],
@@ -1640,13 +1581,95 @@ Your job is to summarize the case, explain the key risk logic, challenge weak as
 
 Rules:
 - Missing evidence is uncertainty, not proof that a control is effective or ineffective.
+- An evidence gap exists only when the case explicitly shows Missing, Expired, Pending, an open finding that requires validation evidence, or a provisional input that cannot be validated from the existing case data.
+- Never treat a desirable best practice, certification, report, test, monitoring log, or other item that would be useful to have as an evidence gap unless the supplied case data explicitly requires it.
+- Never invent requests for SOC 2, ISO 27001, penetration tests, monitoring logs, performance data, control tests, policies, reports, or certificates.
+- Use evidence_policy.explicit_vendor_evidence_reasons as the complete allowlist for vendor evidence requests. If that list is empty, vendor_evidence_required must be false and you must not request additional vendor evidence.
+- A provisional assessment is an internal analyst-validation issue first. It does not by itself justify Awaiting Vendor, Approve with conditions, or a vendor evidence request.
+- When assessment_is_provisional is true, use "Assessment inputs require analyst validation" as the assessment gap and "Assessment conclusions still require analyst validation." as the risk challenge. The basis is the provisional modelled inherent-risk inputs.
+- While the assessment is provisional, proposed_case_status must be "In Review" and proposed_risk_decision must be "Further review".
 - Do not recommend closing a material finding without adequate validation evidence.
 - Be proportionate to vendor criticality and actual case facts.
-- If information is insufficient, prefer Further review / Awaiting Vendor over unsupported approval.
+- If information is insufficient, prefer Further review. Use Awaiting Vendor only when evidence_policy contains a concrete vendor evidence reason.
 - Distinguish facts from analytical judgment.
 - The recommendation is advisory. A human analyst remains accountable and must explicitly approve every database change.
 - Keep the output concise enough to scan in an operational case-management screen.
 """.strip()
+
+
+PROVISIONAL_RECOMMENDATION = (
+    "Validate the modelled inherent-risk inputs using the existing case information. "
+    "If they are substantiated, retain the current Low residual risk and Monitor treatment; "
+    "otherwise update the inputs and recalculate the assessment."
+)
+
+PROVISIONAL_NEXT_ACTION = (
+    "Review and confirm the provisional assessment inputs in the Assessment tab. "
+    "Request additional vendor evidence only if a specific input cannot be validated from the existing case data."
+)
+
+
+def enforce_ai_review_guardrails(case_context, review):
+    guarded = dict(review)
+    policy = case_context.get("evidence_policy", {}) or {}
+    risk_engine_data = case_context.get("risk_engine", {}) or {}
+    assessment_quality = str(risk_engine_data.get("assessment_quality", "") or "")
+    provisional = bool(policy.get("assessment_is_provisional")) or assessment_quality.lower().startswith("provisional")
+    explicit_reasons = [
+        str(item).strip()
+        for item in policy.get("explicit_vendor_evidence_reasons", []) or []
+        if str(item).strip()
+    ]
+    vendor_evidence_required = bool(explicit_reasons)
+
+    guarded["vendor_evidence_required"] = vendor_evidence_required
+    guarded["evidence_gaps"] = list(explicit_reasons)
+
+    if provisional:
+        guarded["evidence_gaps"] = ["Assessment inputs require analyst validation", *explicit_reasons]
+        guarded["risk_challenges"] = ["Assessment conclusions still require analyst validation."]
+        final_residual = str(risk_engine_data.get("final_residual", "") or "")
+        treatment = str(risk_engine_data.get("treatment", "") or "")
+        if final_residual == "Low" and treatment == "Monitor":
+            guarded["recommendation"] = PROVISIONAL_RECOMMENDATION
+        else:
+            guarded["recommendation"] = (
+                "Validate the modelled inherent-risk inputs using the existing case information. "
+                f"If they are substantiated, retain the current {final_residual or 'recorded'} residual risk "
+                f"and {treatment or 'recorded'} treatment; otherwise update the inputs and recalculate the assessment."
+            )
+        guarded["proposed_case_status"] = "In Review"
+        guarded["proposed_risk_decision"] = "Further review"
+        guarded["proposed_next_action"] = PROVISIONAL_NEXT_ACTION
+        guarded["proposed_rationale"] = (
+            "Assessment quality is Provisional because the inherent-risk inputs are modelled. "
+            "Analyst validation is required before changing the current case status or risk decision."
+        )
+    else:
+        recommendation = str(guarded.get("recommendation", "") or "")
+        next_action = str(guarded.get("proposed_next_action", "") or "")
+        evidence_request_pattern = (
+            r"\b(request|obtain|collect|provide|ask for|require)\b.{0,100}"
+            r"\b(evidence|soc\s*2|iso\s*27001|pen(?:etration)?\s*test|logs?|report|certificate|document)\b"
+        )
+        if not vendor_evidence_required and re.search(evidence_request_pattern, recommendation, flags=re.IGNORECASE):
+            guarded["recommendation"] = (
+                "Complete the review using the existing case information and retain the current assessment "
+                "unless a specific unsupported input or issue is identified."
+            )
+        if not vendor_evidence_required and re.search(evidence_request_pattern, next_action, flags=re.IGNORECASE):
+            guarded["proposed_next_action"] = (
+                "Complete the review using the existing case information. Request additional vendor evidence "
+                "only if a specific unsupported input or issue is identified."
+            )
+        if not vendor_evidence_required and guarded.get("proposed_case_status") == "Awaiting Vendor":
+            guarded["proposed_case_status"] = "In Review"
+            guarded["proposed_next_action"] = (
+                "Complete the review using the existing case information. Request additional vendor evidence "
+                "only if a specific unsupported input or issue is identified."
+            )
+
+    return guarded
 
 
 def run_ai_case_review(case_context):
@@ -1694,11 +1717,10 @@ def run_ai_case_review(case_context):
     content = response.choices[0].message.content
     if not content:
         raise RuntimeError("OpenRouter returned an empty AI review.")
-    return json.loads(content)
+    return enforce_ai_review_guardrails(case_context, json.loads(content))
 
 
 def apply_ai_case_recommendation(vendor_id, case_state, review, actor):
-    """Apply controlled AI-proposed fields only after explicit analyst approval."""
     values = {
         "case_status": review["proposed_case_status"],
         "risk_decision": review["proposed_risk_decision"],
@@ -1716,9 +1738,6 @@ def apply_ai_case_recommendation(vendor_id, case_state, review, actor):
     )
 
 
-# ============================================================
-# LOAD DATA
-# ============================================================
 
 ensure_document_files_table()
 ensure_vendor_assessments_table()
@@ -1732,9 +1751,6 @@ requirements = load_data("document_requirements")
 findings_db = load_data("findings")
 
 
-# ============================================================
-# SIDEBAR
-# ============================================================
 
 st.sidebar.markdown(
     """
@@ -1749,7 +1765,6 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
-# Real Microsoft Entra identity shown in the workspace shell.
 auth_user = getattr(st, "user", None)
 if auth_user is None:
     auth_user = getattr(st, "experimental_user", None)
@@ -1773,8 +1788,6 @@ email_html = (
     else ""
 )
 
-# Keep the HTML on one logical line. When email_html is empty, an indented
-# multiline Markdown block can be interpreted as a code block by Streamlit.
 identity_card_html = (
     f'<div class="entra-user-card">'
     f'<div class="entra-user-kicker">MICROSOFT ENTRA ID</div>'
@@ -1812,9 +1825,6 @@ st.sidebar.markdown(
 )
 
 
-# ============================================================
-# EXECUTIVE DASHBOARD
-# ============================================================
 
 if menu == "Executive Dashboard":
 
@@ -1960,9 +1970,6 @@ if menu == "Executive Dashboard":
         )
 
 
-# ============================================================
-# VENDOR PORTFOLIO
-# ============================================================
 
 elif menu == "Vendor Portfolio":
 
@@ -2039,7 +2046,7 @@ elif menu == "Vendor Portfolio":
                 <div class="risk-flow">
                     <div class="risk-node">
                         <div class="risk-node-label">Inherent Risk</div>
-                        <div class="risk-node-value">{risk["inherent_level"]} Â· {risk["inherent_score"]}/15</div>
+                        <div class="risk-node-value">{risk["inherent_level"]} | {risk["inherent_score"]}/15</div>
                     </div>
                     <div class="risk-arrow">-></div>
                     <div class="risk-node">
@@ -2064,12 +2071,12 @@ elif menu == "Vendor Portfolio":
             )
             st.caption(
                 f'Criticality calculation: {calculation} = '
-                f'{risk["criticality_score"]}/12 â†’ {risk["criticality_tier"]}'
+                f'{risk["criticality_score"]}/12 -> {risk["criticality_tier"]}'
             )
         else:
             st.caption(
                 f'Criticality source: {risk["criticality_source"]}. '
-                "Open the assessment inputs to complete the transparent 0â€“12 factor calculation."
+                "Open the assessment inputs to complete the transparent 0-12 factor calculation."
             )
 
         with st.expander("Assessment inputs and human override"):
@@ -2082,8 +2089,8 @@ elif menu == "Vendor Portfolio":
             can_override = True
             score_options = [None, 0, 1, 2, 3]
             score_labels = {
-                None: "Review Required", 0: "0 â€” None / negligible",
-                1: "1 â€” Limited", 2: "2 â€” Significant", 3: "3 â€” Severe",
+                None: "Review Required", 0: "0 - None / negligible",
+                1: "1 - Limited", 2: "2 - Significant", 3: "3 - Severe",
             }
 
             def saved_index(field):
@@ -2113,7 +2120,7 @@ elif menu == "Vendor Portfolio":
                             disabled=False,
                         )
 
-                st.markdown("**Human override â€” optional**")
+                st.markdown("**Human override - optional**")
                 override_options = ["No override", "Low", "Medium", "High", "Critical"]
                 current_override = str(saved.get("override_rating", "") or "")
                 override_default = override_options.index(current_override) if current_override in override_options else 0
@@ -2168,7 +2175,7 @@ elif menu == "Vendor Portfolio":
                 )
                 st.caption(source)
             st.markdown(
-                f'**Inherent Risk Total: {risk["inherent_score"]}/15 â€” {risk["inherent_level"]}**'
+                f'**Inherent Risk Total: {risk["inherent_score"]}/15 - {risk["inherent_level"]}**'
             )
             st.caption(
                 f'Assessment status: {risk["assessment_quality"]}. '
@@ -2196,7 +2203,7 @@ elif menu == "Vendor Portfolio":
                 if days < 0:
                     st.error("Contract expired.")
                 elif days <= 90:
-                    st.caption(f"Contract expires in {days} days â€” operational watch active.")
+                    st.caption(f"Contract expires in {days} days - operational watch active.")
                 else:
                     st.success(f"{days} days remaining.")
             st.markdown("</div>", unsafe_allow_html=True)
@@ -2204,7 +2211,7 @@ elif menu == "Vendor Portfolio":
         if risk["contract_watch"]:
             watch = risk["contract_watch"]
             st.warning(
-                f'Contract Watch Item â€” {watch["status"]}\n\n'
+                f'Contract Watch Item - {watch["status"]}\n\n'
                 f'**{watch["days"]} days remaining.** {watch["action"]}\n\n'
                 f'Owner: {watch["owner"]}  \n'
                 f'Risk impact: {watch["risk_impact"]}.'
@@ -2226,7 +2233,7 @@ elif menu == "Vendor Portfolio":
         )
         if risk["override_applied"]:
             st.warning(
-                f'Override rationale: {risk["override_reason"]} Â· '
+                f'Override rationale: {risk["override_reason"]} | '
                 f'Review date: {risk["override_review_date"] or "Not provided"}'
             )
         st.caption(
@@ -2235,7 +2242,6 @@ elif menu == "Vendor Portfolio":
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # --- Evidence Posture + attach/view files ---
         st.markdown(
             '<div class="section-card"><div class="section-title">Evidence Posture</div>',
             unsafe_allow_html=True,
@@ -2319,7 +2325,7 @@ elif menu == "Vendor Portfolio":
                     f"""
                     <div class="finding {cls}">
                         <div class="finding-title">{f["severity"]} - {f["finding_type"]}</div>
-                        <div class="finding-detail">{f["domain"]} Â· {f["description"]}</div>
+                        <div class="finding-detail">{f["domain"]} | {f["description"]}</div>
                         <div class="finding-detail">Rationale: {f["rationale"]}</div>
                     </div>
                     """,
@@ -2328,9 +2334,6 @@ elif menu == "Vendor Portfolio":
         st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ============================================================
-# VENDOR CASE WORKSPACE
-# ============================================================
 
 elif menu == "Vendor Case Workspace":
 
@@ -2611,30 +2614,43 @@ elif menu == "Vendor Case Workspace":
 
             review = st.session_state.get(review_key)
             if review:
-                c1, c2 = st.columns([1.25, .75])
-                with c1:
-                    st.markdown("#### Case summary")
-                    st.write(review.get("case_summary", ""))
+                with st.container(border=True):
+                    summary_col, confidence_col = st.columns([4, 1])
+                    with summary_col:
+                        st.markdown("#### Case summary")
+                        st.write(review.get("case_summary", ""))
+                    with confidence_col:
+                        st.metric("AI confidence", review.get("confidence", "-"))
+
+                with st.container(border=True):
                     st.markdown("#### Why the Copilot sees it this way")
                     st.write(review.get("risk_explanation", ""))
-                    st.markdown("#### Recommendation")
-                    st.info(review.get("recommendation", ""))
-                with c2:
-                    st.metric("AI confidence", review.get("confidence", "-"))
+
                     gaps = review.get("evidence_gaps", [])
                     challenges = review.get("risk_challenges", [])
-                    st.markdown("**Evidence gaps**")
-                    if gaps:
-                        for item in gaps:
-                            st.markdown(f"- {item}")
-                    else:
-                        st.caption("No material evidence gaps identified.")
-                    st.markdown("**Risk challenge**")
-                    if challenges:
-                        for item in challenges:
-                            st.markdown(f"- {item}")
-                    else:
-                        st.caption("No material challenge identified.")
+                    gaps_col, challenges_col = st.columns(2)
+                    with gaps_col:
+                        st.markdown("**Evidence gaps**")
+                        if gaps:
+                            for item in gaps:
+                                st.markdown(f"- {item}")
+                                if item == "Assessment inputs require analyst validation":
+                                    st.caption("Basis: Assessment quality = Provisional")
+                                    st.caption("Action: Validate the modelled inputs in the Assessment tab.")
+                        else:
+                            st.caption("No material evidence gaps identified.")
+                    with challenges_col:
+                        st.markdown("**Risk challenge**")
+                        if challenges:
+                            for item in challenges:
+                                st.markdown(f"- {item}")
+                                if item == "Assessment conclusions still require analyst validation.":
+                                    st.caption("Basis: The inherent-risk inputs are modelled and provisional.")
+                        else:
+                            st.caption("No material challenge identified.")
+
+                st.markdown("#### Recommendation")
+                st.info(review.get("recommendation", ""))
 
                 st.markdown("#### Proposed change")
                 current_status_display = str(case_state.get("case_status", "In Review") or "In Review")
@@ -2642,8 +2658,8 @@ elif menu == "Vendor Case Workspace":
                 current_next_action = str(case_state.get("next_action", "") or "Not recorded")
                 p1, p2 = st.columns(2)
                 with p1:
-                    st.markdown(f"**Case status**  \n`{current_status_display}` â†’ `{review.get('proposed_case_status', current_status_display)}`")
-                    st.markdown(f"**Risk decision**  \n`{current_decision_display}` â†’ `{review.get('proposed_risk_decision', current_decision_display)}`")
+                    st.markdown(f"**Case status**  \n`{current_status_display}` -> `{review.get('proposed_case_status', current_status_display)}`")
+                    st.markdown(f"**Risk decision**  \n`{current_decision_display}` -> `{review.get('proposed_risk_decision', current_decision_display)}`")
                 with p2:
                     st.markdown("**Next action**")
                     st.caption(f"Current: {current_next_action}")
@@ -2720,9 +2736,6 @@ elif menu == "Vendor Case Workspace":
                 st.markdown(f'''<div class="section-card" style="padding:.75rem 1rem;margin-bottom:.5rem;"><div class="section-title" style="margin-bottom:.25rem;">{event.get("activity_type", "Activity")}</div><div style="font-size:.85rem;">{event.get("activity_detail", "")}</div><div style="font-size:.72rem;color:#687086;margin-top:.35rem;">{event.get("created_at", "")} - {event.get("actor", "Authenticated user")}</div></div>''', unsafe_allow_html=True)
 
 
-# ============================================================
-# RISK REGISTER
-# ============================================================
 
 elif menu == "Risk Register":
 
@@ -2767,9 +2780,6 @@ elif menu == "Risk Register":
     )
 
 
-# ============================================================
-# FINDINGS & REMEDIATION
-# ============================================================
 
 elif menu == "Findings & Remediation":
 
@@ -2792,7 +2802,7 @@ elif menu == "Findings & Remediation":
                 "Severity": f["severity"], "Type": f["finding_type"],
                 "Domain": f["domain"], "Description": f["description"],
                 "Rationale": f["rationale"], "Status": "Open",
-                "Owner": "Relationship Owner â€” First Line",
+                "Owner": "Relationship Owner - First Line",
             })
             finding_id += 1
 
@@ -2817,9 +2827,6 @@ elif menu == "Findings & Remediation":
         )
 
 
-# ============================================================
-# FOURTH-PARTY RISK
-# ============================================================
 
 elif menu == "Fourth-Party Risk":
 
@@ -2865,9 +2872,6 @@ elif menu == "Fourth-Party Risk":
         )
 
 
-# ============================================================
-# DOCUMENT COMPLIANCE
-# ============================================================
 
 elif menu == "Document Compliance":
 
@@ -2970,9 +2974,6 @@ elif menu == "Document Compliance":
         st.info("Evidence is partially complete; pending items remain.")
 
 
-# ============================================================
-# SAMPLE DOCUMENT LIBRARY
-# ============================================================
 
 elif menu == "Sample Document Library":
 
@@ -3021,9 +3022,6 @@ elif menu == "Sample Document Library":
         st.write("")
 
 
-# ============================================================
-# ASSESSMENT SIMULATION
-# ============================================================
 
 elif menu == "Assessment Simulation":
 
@@ -3118,7 +3116,7 @@ elif menu == "Assessment Simulation":
                 <div class="metric-label">Model Assessment</div>
                 <div class="score-number" style="font-size:1.55rem;">{model["level"]}</div>
                 <div style="color:#b7c0d6;margin-top:.45rem;">
-                    {model["criticality_tier"]} Â· Inherent {model["inherent_level"]} Â·
+                    {model["criticality_tier"]} | Inherent {model["inherent_level"]} |
                     Controls {model["control_effectiveness"]}
                 </div>
             </div>
@@ -3129,8 +3127,8 @@ elif menu == "Assessment Simulation":
         st.write("")
         st.write("**Transparent inherent-risk calculation:**")
         for name, value, maximum, source in model["drivers"]:
-            st.write(f"- {name}: {value}/{maximum} â€” {source}")
-        st.write(f'**Total:** {model["inherent_score"]}/15 â€” {model["inherent_level"]}')
+            st.write(f"- {name}: {value}/{maximum} - {source}")
+        st.write(f'**Total:** {model["inherent_score"]}/15 - {model["inherent_level"]}')
 
         st.info(
             "This is a training model, not a production risk methodology. "
@@ -3139,9 +3137,6 @@ elif menu == "Assessment Simulation":
         )
 
 
-# ============================================================
-# IT RISK / GRC PRACTICE LAB
-# ============================================================
 
 elif menu == "IT Risk / GRC Practice Lab":
 
@@ -4199,9 +4194,6 @@ elif menu == "IT Risk / GRC Practice Lab":
             )
 
 
-# ============================================================
-# DATA IMPORT
-# ============================================================
 
 elif menu == "Data Import":
 
