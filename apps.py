@@ -1016,7 +1016,7 @@ def contract_watch_item(contract_days):
     return {
         "status": status,
         "days": contract_days,
-        "owner": "Relationship Owner — First Line",
+        "owner": "Relationship Owner â€” First Line",
         "action": action,
         "risk_impact": "None unless the review identifies an actual issue",
     }
@@ -1318,22 +1318,22 @@ def valid_assessment_value(value):
 
 def legacy_tier(value):
     mapping = {
-        "critical": "Tier 1 — Critical",
-        "high": "Tier 2 — High Importance",
-        "medium": "Tier 3 — Moderate",
-        "low": "Tier 4 — Low",
+        "critical": "Tier 1 â€” Critical",
+        "high": "Tier 2 â€” High Importance",
+        "medium": "Tier 3 â€” Moderate",
+        "low": "Tier 4 â€” Low",
     }
     return mapping.get(str(value).strip().lower(), "Review Required")
 
 
 def tier_from_score(score):
     if score >= 10:
-        return "Tier 1 — Critical"
+        return "Tier 1 â€” Critical"
     if score >= 7:
-        return "Tier 2 — High Importance"
+        return "Tier 2 â€” High Importance"
     if score >= 4:
-        return "Tier 3 — Moderate"
-    return "Tier 4 — Low"
+        return "Tier 3 â€” Moderate"
+    return "Tier 4 â€” Low"
 
 
 def tier_number(tier):
@@ -1518,7 +1518,7 @@ def risk_engine(vendor, documents, subcontractors, requirements):
         criticality_factors = {}
         criticality_score = None
         tier = legacy_tier(v.get("criticality"))
-        criticality_source = "Imported classification — complete factor assessment to verify"
+        criticality_source = "Imported classification â€” complete factor assessment to verify"
 
     manual_inherent = all(valid_assessment_value(saved.get(field)) for field in INHERENT_FIELDS)
     if manual_inherent:
@@ -1527,7 +1527,7 @@ def risk_engine(vendor, documents, subcontractors, requirements):
         assessment_quality = "Verified"
     else:
         inherent_factors, inherent_sources = derive_provisional_inherent(v, subs)
-        assessment_quality = "Provisional — review modelled inputs"
+        assessment_quality = "Provisional â€” review modelled inputs"
 
     inherent_score = sum(inherent_factors.values())
     inherent = inherent_level(inherent_score)
@@ -1754,29 +1754,72 @@ def run_ai_case_review(case_context):
     )
 
     compact_json = json.dumps(case_context, ensure_ascii=False, default=str, separators=(",", ":"))
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": AI_COPILOT_INSTRUCTIONS},
-            {"role": "user", "content": "Review this active TPRM case and return the structured recommendation. CASE=" + compact_json},
-        ],
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "tprm_case_review",
-                "description": "Structured human-in-the-loop TPRM case recommendation.",
-                "schema": AI_REVIEW_SCHEMA,
-                "strict": True,
+    def _request_review(messages, token_budget=1800):
+        return client.chat.completions.create(
+            model=model,
+            messages=messages,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "tprm_case_review",
+                    "description": "Structured human-in-the-loop TPRM case recommendation.",
+                    "schema": AI_REVIEW_SCHEMA,
+                    "strict": True,
+                },
             },
-        },
-        max_tokens=1100,
-        extra_body={"provider": {"require_parameters": True}},
-    )
+            # Some free OpenRouter models can be verbose even when instructed to be concise.
+            # A larger ceiling prevents otherwise-valid JSON from being cut mid-string.
+            max_tokens=token_budget,
+            extra_body={"provider": {"require_parameters": True}},
+        )
 
+    def _parse_review_content(content):
+        if not content:
+            raise ValueError("OpenRouter returned an empty AI review.")
+        cleaned = str(content).strip()
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        elif cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+        # Defensive extraction in case a model adds a short sentence around the JSON.
+        first = cleaned.find("{")
+        last = cleaned.rfind("}")
+        if first > 0 and last > first:
+            cleaned = cleaned[first:last + 1]
+        return json.loads(cleaned)
+
+    base_messages = [
+        {"role": "system", "content": AI_COPILOT_INSTRUCTIONS},
+        {"role": "user", "content": "Review this active TPRM case and return only the structured recommendation. CASE=" + compact_json},
+    ]
+
+    response = _request_review(base_messages, token_budget=1800)
     content = response.choices[0].message.content
-    if not content:
-        raise RuntimeError("OpenRouter returned an empty AI review.")
-    return json.loads(content)
+    finish_reason = getattr(response.choices[0], "finish_reason", None)
+
+    try:
+        return _parse_review_content(content)
+    except (json.JSONDecodeError, ValueError) as first_error:
+        # Free-router models occasionally return truncated or slightly malformed JSON.
+        # Retry once, asking the model to regenerate a shorter valid object. This keeps
+        # normal reviews to one request while preventing vendor-specific random failures.
+        repair_messages = [
+            {"role": "system", "content": AI_COPILOT_INSTRUCTIONS + "\nReturn ONLY valid JSON matching the schema. Keep every text field shorter than the stated limits."},
+            {"role": "user", "content": "Regenerate a complete, concise structured review for this case. Do not add markdown or commentary. CASE=" + compact_json},
+        ]
+        retry = _request_review(repair_messages, token_budget=1800)
+        retry_content = retry.choices[0].message.content
+        retry_finish = getattr(retry.choices[0], "finish_reason", None)
+        try:
+            return _parse_review_content(retry_content)
+        except (json.JSONDecodeError, ValueError) as second_error:
+            reason = f" (first finish={finish_reason}, retry finish={retry_finish})"
+            raise RuntimeError(
+                "The free AI provider returned an incomplete structured response twice" + reason + ". Please run the review again."
+            ) from second_error
 
 
 def save_ai_review(vendor_id, context_hash, model, review, actor):
@@ -2188,7 +2231,7 @@ elif menu == "Vendor Portfolio":
                 <div class="risk-flow">
                     <div class="risk-node">
                         <div class="risk-node-label">Inherent Risk</div>
-                        <div class="risk-node-value">{risk["inherent_level"]} · {risk["inherent_score"]}/15</div>
+                        <div class="risk-node-value">{risk["inherent_level"]} Â· {risk["inherent_score"]}/15</div>
                     </div>
                     <div class="risk-arrow">-></div>
                     <div class="risk-node">
@@ -2213,12 +2256,12 @@ elif menu == "Vendor Portfolio":
             )
             st.caption(
                 f'Criticality calculation: {calculation} = '
-                f'{risk["criticality_score"]}/12 → {risk["criticality_tier"]}'
+                f'{risk["criticality_score"]}/12 â†’ {risk["criticality_tier"]}'
             )
         else:
             st.caption(
                 f'Criticality source: {risk["criticality_source"]}. '
-                "Open the assessment inputs to complete the transparent 0–12 factor calculation."
+                "Open the assessment inputs to complete the transparent 0â€“12 factor calculation."
             )
 
         with st.expander("Assessment inputs and human override"):
@@ -2231,8 +2274,8 @@ elif menu == "Vendor Portfolio":
             can_override = True
             score_options = [None, 0, 1, 2, 3]
             score_labels = {
-                None: "Review Required", 0: "0 — None / negligible",
-                1: "1 — Limited", 2: "2 — Significant", 3: "3 — Severe",
+                None: "Review Required", 0: "0 â€” None / negligible",
+                1: "1 â€” Limited", 2: "2 â€” Significant", 3: "3 â€” Severe",
             }
 
             def saved_index(field):
@@ -2262,7 +2305,7 @@ elif menu == "Vendor Portfolio":
                             disabled=False,
                         )
 
-                st.markdown("**Human override — optional**")
+                st.markdown("**Human override â€” optional**")
                 override_options = ["No override", "Low", "Medium", "High", "Critical"]
                 current_override = str(saved.get("override_rating", "") or "")
                 override_default = override_options.index(current_override) if current_override in override_options else 0
@@ -2317,7 +2360,7 @@ elif menu == "Vendor Portfolio":
                 )
                 st.caption(source)
             st.markdown(
-                f'**Inherent Risk Total: {risk["inherent_score"]}/15 — {risk["inherent_level"]}**'
+                f'**Inherent Risk Total: {risk["inherent_score"]}/15 â€” {risk["inherent_level"]}**'
             )
             st.caption(
                 f'Assessment status: {risk["assessment_quality"]}. '
@@ -2345,7 +2388,7 @@ elif menu == "Vendor Portfolio":
                 if days < 0:
                     st.error("Contract expired.")
                 elif days <= 90:
-                    st.caption(f"Contract expires in {days} days — operational watch active.")
+                    st.caption(f"Contract expires in {days} days â€” operational watch active.")
                 else:
                     st.success(f"{days} days remaining.")
             st.markdown("</div>", unsafe_allow_html=True)
@@ -2353,7 +2396,7 @@ elif menu == "Vendor Portfolio":
         if risk["contract_watch"]:
             watch = risk["contract_watch"]
             st.warning(
-                f'Contract Watch Item — {watch["status"]}\n\n'
+                f'Contract Watch Item â€” {watch["status"]}\n\n'
                 f'**{watch["days"]} days remaining.** {watch["action"]}\n\n'
                 f'Owner: {watch["owner"]}  \n'
                 f'Risk impact: {watch["risk_impact"]}.'
@@ -2375,7 +2418,7 @@ elif menu == "Vendor Portfolio":
         )
         if risk["override_applied"]:
             st.warning(
-                f'Override rationale: {risk["override_reason"]} · '
+                f'Override rationale: {risk["override_reason"]} Â· '
                 f'Review date: {risk["override_review_date"] or "Not provided"}'
             )
         st.caption(
@@ -2468,7 +2511,7 @@ elif menu == "Vendor Portfolio":
                     f"""
                     <div class="finding {cls}">
                         <div class="finding-title">{f["severity"]} - {f["finding_type"]}</div>
-                        <div class="finding-detail">{f["domain"]} · {f["description"]}</div>
+                        <div class="finding-detail">{f["domain"]} Â· {f["description"]}</div>
                         <div class="finding-detail">Rationale: {f["rationale"]}</div>
                     </div>
                     """,
@@ -2763,7 +2806,7 @@ elif menu == "Vendor Case Workspace":
             if run_col.button(run_label, type="primary", use_container_width=True, key=f"run_ai_review_{vendor_id}"):
                 status = st.status("Preparing vendor case...", expanded=True)
                 try:
-                    status.write("Building a minimal case packet — evidence, findings and disposition only.")
+                    status.write("Building a minimal case packet â€” evidence, findings and disposition only.")
                     status.write("Sending the case to the risk reviewer...")
                     review = run_ai_case_review(context)
                     model = st.secrets.get("AI_MODEL", "openrouter/free")
@@ -2805,7 +2848,7 @@ elif menu == "Vendor Case Workspace":
                             <div>
                                 <div class="ai-eyebrow">AI case review</div>
                                 <div class="ai-review-title">{vendor_name_display}</div>
-                                <div class="ai-review-meta">Reviewed {review_time or "this session"} · {review_model} · {disposition}</div>
+                                <div class="ai-review-meta">Reviewed {review_time or "this session"} Â· {review_model} Â· {disposition}</div>
                             </div>
                             <div class="ai-status-pill{tag_class}">{current_tag}</div>
                         </div>
@@ -2844,12 +2887,12 @@ elif menu == "Vendor Case Workspace":
                     f'''<div class="ai-change-grid">
                         <div class="ai-change-card">
                             <div class="ai-change-label">Case status</div>
-                            <div class="ai-change-current">{_h(current_status_display)} <span class="ai-change-arrow">→</span></div>
+                            <div class="ai-change-current">{_h(current_status_display)} <span class="ai-change-arrow">â†’</span></div>
                             <div class="ai-change-proposed">{_h(proposed_status)}</div>
                         </div>
                         <div class="ai-change-card">
                             <div class="ai-change-label">Risk decision</div>
-                            <div class="ai-change-current">{_h(current_decision_display)} <span class="ai-change-arrow">→</span></div>
+                            <div class="ai-change-current">{_h(current_decision_display)} <span class="ai-change-arrow">â†’</span></div>
                             <div class="ai-change-proposed">{_h(proposed_decision)}</div>
                         </div>
                         <div class="ai-change-card">
@@ -3011,7 +3054,7 @@ elif menu == "Findings & Remediation":
                 "Severity": f["severity"], "Type": f["finding_type"],
                 "Domain": f["domain"], "Description": f["description"],
                 "Rationale": f["rationale"], "Status": "Open",
-                "Owner": "Relationship Owner — First Line",
+                "Owner": "Relationship Owner â€” First Line",
             })
             finding_id += 1
 
@@ -3337,7 +3380,7 @@ elif menu == "Assessment Simulation":
                 <div class="metric-label">Model Assessment</div>
                 <div class="score-number" style="font-size:1.55rem;">{model["level"]}</div>
                 <div style="color:#b7c0d6;margin-top:.45rem;">
-                    {model["criticality_tier"]} · Inherent {model["inherent_level"]} ·
+                    {model["criticality_tier"]} Â· Inherent {model["inherent_level"]} Â·
                     Controls {model["control_effectiveness"]}
                 </div>
             </div>
@@ -3348,8 +3391,8 @@ elif menu == "Assessment Simulation":
         st.write("")
         st.write("**Transparent inherent-risk calculation:**")
         for name, value, maximum, source in model["drivers"]:
-            st.write(f"- {name}: {value}/{maximum} — {source}")
-        st.write(f'**Total:** {model["inherent_score"]}/15 — {model["inherent_level"]}')
+            st.write(f"- {name}: {value}/{maximum} â€” {source}")
+        st.write(f'**Total:** {model["inherent_score"]}/15 â€” {model["inherent_level"]}')
 
         st.info(
             "This is a training model, not a production risk methodology. "
