@@ -1862,10 +1862,9 @@ def run_ai_case_review(case_context):
 
     try:
         return _parse_review_content(content)
-    except (json.JSONDecodeError, ValueError) as first_error:
-        # Free-router models occasionally return truncated or slightly malformed JSON.
-        # Retry once, asking the model to regenerate a shorter valid object. This keeps
-        # normal reviews to one request while preventing vendor-specific random failures.
+    except (json.JSONDecodeError, ValueError):
+        # Free-router models occasionally return truncated, empty or slightly malformed JSON.
+        # Retry with a shorter regeneration request.
         repair_messages = [
             {"role": "system", "content": AI_COPILOT_INSTRUCTIONS + "\nReturn ONLY valid JSON matching the schema. Keep every text field shorter than the stated limits."},
             {"role": "user", "content": "Regenerate a complete, concise structured review for this case. Do not add markdown or commentary. CASE=" + compact_json},
@@ -1875,11 +1874,24 @@ def run_ai_case_review(case_context):
         retry_finish = getattr(retry.choices[0], "finish_reason", None)
         try:
             return _parse_review_content(retry_content)
-        except (json.JSONDecodeError, ValueError) as second_error:
-            reason = f" (first finish={finish_reason}, retry finish={retry_finish})"
-            raise RuntimeError(
-                "The free AI provider returned an incomplete structured response twice" + reason + ". Please run the review again."
-            ) from second_error
+        except (json.JSONDecodeError, ValueError):
+            # Final fallback: some free providers do not reliably honour json_schema.
+            # Ask for plain JSON and validate it locally.
+            fallback = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": AI_COPILOT_INSTRUCTIONS + "\nReturn one compact JSON object only. No markdown. No prose outside JSON."},
+                    {"role": "user", "content": "Return the TPRM case review as JSON only. CASE=" + compact_json},
+                ],
+                max_tokens=1800,
+            )
+            fallback_content = fallback.choices[0].message.content
+            try:
+                return _parse_review_content(fallback_content)
+            except (json.JSONDecodeError, ValueError) as final_error:
+                raise RuntimeError(
+                    "A new AI review is temporarily unavailable. Please try again in a moment."
+                ) from final_error
 
 
 def save_ai_review(vendor_id, context_hash, model, review, actor):
@@ -2896,6 +2908,12 @@ elif menu == "Vendor Case Workspace":
             run_label = "Run new AI review" if review else "Run AI case review"
             run_col, clear_col = st.columns([1, .28])
             if run_col.button(run_label, type="primary", use_container_width=True, key=f"run_ai_review_{vendor_id}"):
+                # Starting a new review invalidates the previously displayed review immediately.
+                # Historical rows remain in the database/audit trail, but only the newly generated
+                # review can become active in the interface.
+                st.session_state.pop(review_key, None)
+                st.session_state[hide_key] = True
+                review = None
                 status = st.status("Preparing vendor case...", expanded=True)
                 try:
                     status.write("Building a minimal case packet â€” evidence, findings and disposition only.")
@@ -2916,9 +2934,12 @@ elif menu == "Vendor Case Workspace":
                     log_vendor_activity(vendor_id, "AI case review generated", "Copilot generated an advisory case review. No case data was changed.", actor)
                     status.update(label="AI case review ready", state="complete", expanded=False)
                     st.rerun()
-                except Exception as exc:
-                    status.update(label="AI review failed", state="error", expanded=True)
-                    st.error(f"AI review could not be completed: {exc}")
+                except Exception:
+                    # Do not resurrect the previous review and do not expose parser/provider internals.
+                    st.session_state.pop(review_key, None)
+                    st.session_state[hide_key] = True
+                    status.update(label="New AI review unavailable", state="error", expanded=False)
+                    st.warning("No valid AI review is available for this case right now. Please try again in a moment.")
 
             if clear_col.button("Hide review", use_container_width=True, key=f"clear_ai_review_{vendor_id}"):
                 st.session_state.pop(review_key, None)
