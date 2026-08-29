@@ -3,6 +3,7 @@ import io
 import json
 import re
 from datetime import datetime
+from html import escape as html_escape
 from pathlib import Path
 
 import pandas as pd
@@ -857,18 +858,22 @@ def truthy(value):
     }
 
 
+def safe_html(value):
+    return html_escape("" if value is None else str(value), quote=True)
+
+
 def badge(value):
     text = str(value)
-    css = text.lower().replace(" ", "-").replace("/", "-")
-    return f'<span class="badge badge-{css}">{text}</span>'
+    css = re.sub(r"[^a-z0-9_-]+", "-", text.lower()).strip("-") or "neutral"
+    return f'<span class="badge badge-{css}">{safe_html(text)}</span>'
 
 
 def page_header(kicker, title, subtitle):
     st.markdown(
         f"""
-        <div class="page-kicker">{kicker}</div>
-        <div class="page-title">{title}</div>
-        <div class="page-subtitle">{subtitle}</div>
+        <div class="page-kicker">{safe_html(kicker)}</div>
+        <div class="page-title">{safe_html(title)}</div>
+        <div class="page-subtitle">{safe_html(subtitle)}</div>
         """,
         unsafe_allow_html=True,
     )
@@ -1463,18 +1468,8 @@ def _clean_for_ai(value):
     return value
 
 
-def _records_for_ai(df, limit=30):
-    if df is None or df.empty:
-        return []
-    return [
-        {str(k): _clean_for_ai(v) for k, v in row.items()}
-        for row in df.head(limit).to_dict(orient="records")
-    ]
-
-
 def build_ai_case_context(vendor, risk, generated_findings, case_state, vendor_actions, documents, subcontractors):
     vendor_id = int(vendor.get("vendor_id"))
-    vendor_docs = documents[documents["vendor_id"] == vendor_id].copy() if not documents.empty and "vendor_id" in documents.columns else pd.DataFrame()
     vendor_subs = subcontractors[subcontractors["vendor_id"] == vendor_id].copy() if not subcontractors.empty and "vendor_id" in subcontractors.columns else pd.DataFrame()
 
     findings = []
@@ -1490,10 +1485,7 @@ def build_ai_case_context(vendor, risk, generated_findings, case_state, vendor_a
             "description": finding.get("description"),
             "rationale": finding.get("rationale"),
             "remediation_status": latest.get("status", "Open"),
-            "remediation_owner": latest.get("owner", ""),
             "due_date": latest.get("due_date", ""),
-            "remediation_plan": latest.get("remediation_plan", ""),
-            "validation_note": latest.get("validation_note", ""),
         })
 
     missing_evidence = risk.get("compliance", {}).get("missing", []) or []
@@ -1509,7 +1501,8 @@ def build_ai_case_context(vendor, risk, generated_findings, case_state, vendor_a
         *[f"Expired evidence: {item}" for item in expired_evidence],
         *[f"Pending evidence: {item}" for item in pending_evidence],
         *[
-            f"Open finding requires remediation validation: {finding.get('finding_id')} - {finding.get('description')}"
+            f"Open finding requires remediation validation: {finding.get('finding_id')} - "
+            f"{finding.get('finding_type')} ({finding.get('domain')})"
             for finding in active_findings
         ],
     ]
@@ -1517,7 +1510,15 @@ def build_ai_case_context(vendor, risk, generated_findings, case_state, vendor_a
     assessment_is_provisional = assessment_quality.lower().startswith("provisional")
 
     return {
-        "vendor": {str(k): _clean_for_ai(v) for k, v in vendor.to_dict().items()},
+        "vendor": {
+            "case_reference": "Active vendor case",
+            "service_type": _clean_for_ai(vendor.get("service_type")),
+            "data_accessed": _clean_for_ai(vendor.get("data_accessed")),
+            "criticality": _clean_for_ai(vendor.get("criticality")),
+            "status": _clean_for_ai(vendor.get("status")),
+            "onboarded_date": _clean_for_ai(vendor.get("onboarded_date")),
+            "contract_end_date": _clean_for_ai(vendor.get("contract_end_date")),
+        },
         "risk_engine": {
             "criticality_tier": risk.get("criticality_tier"),
             "inherent_level": risk.get("inherent_level"),
@@ -1533,11 +1534,26 @@ def build_ai_case_context(vendor, risk, generated_findings, case_state, vendor_a
             "missing_evidence": missing_evidence,
             "expired_evidence": expired_evidence,
             "pending_evidence": pending_evidence,
+            "hidden_fourth_party_count": risk.get("hidden_subcontractors", 0),
+            "contract_days": risk.get("contract_days"),
         },
-        "current_case_state": {str(k): _clean_for_ai(v) for k, v in case_state.items()},
+        "current_case_state": {
+            "case_status": _clean_for_ai(case_state.get("case_status")),
+            "risk_decision": _clean_for_ai(case_state.get("risk_decision")),
+        },
         "findings": findings,
-        "document_records": _records_for_ai(vendor_docs, 25),
-        "fourth_parties": _records_for_ai(vendor_subs, 20),
+        "evidence_summary": {
+            "coverage_pct": risk.get("compliance", {}).get("percentage"),
+            "received_count": risk.get("compliance", {}).get("received"),
+            "required_count": risk.get("compliance", {}).get("required"),
+            "missing": missing_evidence,
+            "expired": expired_evidence,
+            "pending": pending_evidence,
+        },
+        "fourth_party_summary": {
+            "recorded_count": int(len(vendor_subs.index)),
+            "undisclosed_count": int(risk.get("hidden_subcontractors", 0) or 0),
+        },
         "evidence_policy": {
             "assessment_is_provisional": assessment_is_provisional,
             "assessment_validation_gap": "Assessment inputs require analyst validation" if assessment_is_provisional else "",
@@ -1783,7 +1799,7 @@ entra_email = (
 
 show_email = st.sidebar.toggle("Show email", value=False, key="show_entra_email")
 email_html = (
-    f'<div class="entra-user-email">{entra_email}</div>'
+    f'<div class="entra-user-email">{safe_html(entra_email)}</div>'
     if show_email and entra_email and entra_email != entra_name
     else ""
 )
@@ -1791,7 +1807,7 @@ email_html = (
 identity_card_html = (
     f'<div class="entra-user-card">'
     f'<div class="entra-user-kicker">MICROSOFT ENTRA ID</div>'
-    f'<div class="entra-user-name">{entra_name}</div>'
+    f'<div class="entra-user-name">{safe_html(entra_name)}</div>'
     f'{email_html}'
     f'<div class="entra-user-status">Authenticated</div>'
     f'</div>'
@@ -1874,13 +1890,13 @@ if menu == "Executive Dashboard":
                 <div style="flex:1;">
                     <div class="console-title">Risk exposure requires active management</div>
                     <div class="console-copy">
-                        {high_risk} of {len(vendors)} vendors are currently High or Critical risk.
-                        Evidence compliance is {avg_compliance}% and {total_hidden} undisclosed
+                        {safe_html(high_risk)} of {safe_html(len(vendors))} vendors are currently High or Critical risk.
+                        Evidence compliance is {safe_html(avg_compliance)}% and {safe_html(total_hidden)} undisclosed
                         fourth-party relationship(s) are visible in the current dataset.
                     </div>
                 </div>
                 <div style="min-width:150px;text-align:right;">
-                    <div class="console-score" style="font-size:1.65rem;">{overall}</div>
+                    <div class="console-score" style="font-size:1.65rem;">{safe_html(overall)}</div>
                     <div class="console-score-label">Portfolio Residual Risk</div>
                     <div style="margin-top:.45rem;">{badge(overall)}</div>
                 </div>
@@ -1903,9 +1919,9 @@ if menu == "Executive Dashboard":
             st.markdown(
                 f"""
                 <div class="metric-card">
-                    <div class="metric-label">{label}</div>
-                    <div class="metric-value">{value}</div>
-                    <div class="metric-note">{note}</div>
+                    <div class="metric-label">{safe_html(label)}</div>
+                    <div class="metric-value">{safe_html(value)}</div>
+                    <div class="metric-note">{safe_html(note)}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -1950,14 +1966,14 @@ if menu == "Executive Dashboard":
                     f"""
                     <div class="attention-row">
                         <div>
-                            <div class="attention-name">{row["Vendor"]}</div>
+                            <div class="attention-name">{safe_html(row["Vendor"])}</div>
                             <div class="attention-meta">
-                                {row["Risk"]} risk - Evidence {row["Compliance"]}% -
-                                {row["Findings"]} finding(s)
+                                {safe_html(row["Risk"])} risk - Evidence {safe_html(row["Compliance"])}% -
+                                {safe_html(row["Findings"])} finding(s)
                             </div>
                         </div>
                         <div>{badge(row["Risk"])}</div>
-                        <div class="attention-score" style="font-size:.68rem;">{row["Monitoring"]}</div>
+                        <div class="attention-score" style="font-size:.68rem;">{safe_html(row["Monitoring"])}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -2018,18 +2034,18 @@ elif menu == "Vendor Portfolio":
         st.markdown(
             f"""
             <div class="console-card">
-                <div class="console-kicker">Vendor Risk Profile - {v["status"]}</div>
+                <div class="console-kicker">Vendor Risk Profile - {safe_html(v["status"])}</div>
                 <div style="display:flex;justify-content:space-between;gap:2rem;align-items:center;">
                     <div>
-                        <div class="console-title">{v["name"]}</div>
+                        <div class="console-title">{safe_html(v["name"])}</div>
                         <div class="console-copy">
-                            {v["service_type"]} - {v["data_accessed"]}<br>
-                            Criticality: <strong>{risk["criticality_tier"]}</strong><br>
-                            Assessment: <strong>{risk["assessment_quality"]}</strong>
+                            {safe_html(v["service_type"])} - {safe_html(v["data_accessed"])}<br>
+                            Criticality: <strong>{safe_html(risk["criticality_tier"])}</strong><br>
+                            Assessment: <strong>{safe_html(risk["assessment_quality"])}</strong>
                         </div>
                     </div>
                     <div style="text-align:right;">
-                        <div class="console-score" style="font-size:1.8rem;">{risk["final_residual"]}</div>
+                        <div class="console-score" style="font-size:1.8rem;">{safe_html(risk["final_residual"])}</div>
                         <div class="console-score-label">Final Residual Risk</div>
                         <div style="margin-top:.4rem;">{badge(risk["level"])}</div>
                     </div>
@@ -2046,17 +2062,17 @@ elif menu == "Vendor Portfolio":
                 <div class="risk-flow">
                     <div class="risk-node">
                         <div class="risk-node-label">Inherent Risk</div>
-                        <div class="risk-node-value">{risk["inherent_level"]} | {risk["inherent_score"]}/15</div>
+                        <div class="risk-node-value">{safe_html(risk["inherent_level"])} | {safe_html(risk["inherent_score"])}/15</div>
                     </div>
                     <div class="risk-arrow">-></div>
                     <div class="risk-node">
                         <div class="risk-node-label">Control Effectiveness</div>
-                        <div class="risk-node-value">{risk["control_effectiveness"]}</div>
+                        <div class="risk-node-value">{safe_html(risk["control_effectiveness"])}</div>
                     </div>
                     <div class="risk-arrow">-></div>
                     <div class="risk-node">
                         <div class="risk-node-label">Residual Risk</div>
-                        <div class="risk-node-value">{risk["final_residual"]}</div>
+                        <div class="risk-node-value">{safe_html(risk["final_residual"])}</div>
                     </div>
                 </div>
             </div>
@@ -2164,8 +2180,8 @@ elif menu == "Vendor Portfolio":
                 st.markdown(
                     f"""
                     <div class="driver-row">
-                        <span class="driver-name">{name}</span>
-                        <span class="driver-score">{value}/{maximum}</span>
+                        <span class="driver-name">{safe_html(name)}</span>
+                        <span class="driver-score">{safe_html(value)}/{safe_html(maximum)}</span>
                     </div>
                     <div style="height:3px;background:#1a212b;border-radius:2px;margin:-.25rem 0 .35rem;">
                         <div style="width:{pct}%;height:3px;background:#ffb020;border-radius:2px;"></div>
@@ -2190,11 +2206,11 @@ elif menu == "Vendor Portfolio":
             )
             st.markdown(
                 f"""
-                <div class="signal"><span class="signal-name">Criticality</span><span class="signal-value">{risk["criticality_tier"]}</span></div>
-                <div class="signal"><span class="signal-name">Criticality source</span><span class="signal-value">{risk["criticality_source"]}</span></div>
-                <div class="signal"><span class="signal-name">Vendor status</span><span class="signal-value">{v["status"]}</span></div>
-                <div class="signal"><span class="signal-name">Onboarded</span><span class="signal-value">{v["onboarded_date"]}</span></div>
-                <div class="signal"><span class="signal-name">Contract end</span><span class="signal-value">{v["contract_end_date"]}</span></div>
+                <div class="signal"><span class="signal-name">Criticality</span><span class="signal-value">{safe_html(risk["criticality_tier"])}</span></div>
+                <div class="signal"><span class="signal-name">Criticality source</span><span class="signal-value">{safe_html(risk["criticality_source"])}</span></div>
+                <div class="signal"><span class="signal-name">Vendor status</span><span class="signal-value">{safe_html(v["status"])}</span></div>
+                <div class="signal"><span class="signal-name">Onboarded</span><span class="signal-value">{safe_html(v["onboarded_date"])}</span></div>
+                <div class="signal"><span class="signal-name">Contract end</span><span class="signal-value">{safe_html(v["contract_end_date"])}</span></div>
                 """,
                 unsafe_allow_html=True,
             )
@@ -2223,11 +2239,11 @@ elif menu == "Vendor Portfolio":
         )
         st.markdown(
             f"""
-            <div class="signal"><span class="signal-name">Inherent Risk</span><span class="signal-value">{risk["inherent_level"]}</span></div>
-            <div class="signal"><span class="signal-name">Control Effectiveness</span><span class="signal-value">{risk["control_effectiveness"]}</span></div>
-            <div class="signal"><span class="signal-name">Calculated Residual Risk</span><span class="signal-value">{risk["calculated_residual"]}</span></div>
+            <div class="signal"><span class="signal-name">Inherent Risk</span><span class="signal-value">{safe_html(risk["inherent_level"])}</span></div>
+            <div class="signal"><span class="signal-name">Control Effectiveness</span><span class="signal-value">{safe_html(risk["control_effectiveness"])}</span></div>
+            <div class="signal"><span class="signal-name">Calculated Residual Risk</span><span class="signal-value">{safe_html(risk["calculated_residual"])}</span></div>
             <div class="signal"><span class="signal-name">Human Override</span><span class="signal-value">{'Applied' if risk["override_applied"] else 'None'}</span></div>
-            <div class="signal"><span class="signal-name">Final Residual Risk</span><span class="signal-value">{risk["final_residual"]}</span></div>
+            <div class="signal"><span class="signal-name">Final Residual Risk</span><span class="signal-value">{safe_html(risk["final_residual"])}</span></div>
             """,
             unsafe_allow_html=True,
         )
@@ -2266,7 +2282,7 @@ elif menu == "Vendor Portfolio":
                 st.markdown(
                     f"""
                     <div class="signal">
-                        <span class="signal-name">{doc}</span>
+                        <span class="signal-name">{safe_html(doc)}</span>
                         <span>{badge(status_)}</span>
                     </div>
                     """,
@@ -2304,8 +2320,8 @@ elif menu == "Vendor Portfolio":
         st.markdown(
             f"""
             <div class="treatment-card">
-                <div class="treatment-title">{treatment_title}</div>
-                <div class="treatment-copy">{treatment_copy}</div>
+                <div class="treatment-title">{safe_html(treatment_title)}</div>
+                <div class="treatment-copy">{safe_html(treatment_copy)}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -2323,10 +2339,10 @@ elif menu == "Vendor Portfolio":
                 cls = f["severity"].lower()
                 st.markdown(
                     f"""
-                    <div class="finding {cls}">
-                        <div class="finding-title">{f["severity"]} - {f["finding_type"]}</div>
-                        <div class="finding-detail">{f["domain"]} | {f["description"]}</div>
-                        <div class="finding-detail">Rationale: {f["rationale"]}</div>
+                    <div class="finding {safe_html(cls)}">
+                        <div class="finding-title">{safe_html(f["severity"])} - {safe_html(f["finding_type"])}</div>
+                        <div class="finding-detail">{safe_html(f["domain"])} | {safe_html(f["description"])}</div>
+                        <div class="finding-detail">Rationale: {safe_html(f["rationale"])}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -2378,15 +2394,15 @@ elif menu == "Vendor Case Workspace":
 
     st.markdown(
         f'''<div class="console-card">
-            <div class="console-kicker">ACTIVE TPRM CASE - {case_status}</div>
+            <div class="console-kicker">ACTIVE TPRM CASE - {safe_html(case_status)}</div>
             <div style="display:flex;justify-content:space-between;gap:2rem;align-items:center;">
                 <div>
-                    <div class="console-title">{v["name"]}</div>
-                    <div class="console-copy">{v.get("service_type", "Third-party service")} - {v.get("data_accessed", "Data scope not recorded")}<br>
-                    Case owner context: <strong>{v.get("relationship_owner", v.get("business_owner", "First Line / Relationship Owner"))}</strong></div>
+                    <div class="console-title">{safe_html(v["name"])}</div>
+                    <div class="console-copy">{safe_html(v.get("service_type", "Third-party service"))} - {safe_html(v.get("data_accessed", "Data scope not recorded"))}<br>
+                    Case owner context: <strong>{safe_html(v.get("relationship_owner", v.get("business_owner", "First Line / Relationship Owner")))}</strong></div>
                 </div>
                 <div style="text-align:right;">
-                    <div class="console-score" style="font-size:1.8rem;">{risk["final_residual"]}</div>
+                    <div class="console-score" style="font-size:1.8rem;">{safe_html(risk["final_residual"])}</div>
                     <div class="console-score-label">Final Residual Risk</div>
                     <div style="margin-top:.4rem;">{badge(risk["level"])}</div>
                 </div>
@@ -2409,11 +2425,11 @@ elif menu == "Vendor Case Workspace":
         with left:
             st.markdown('<div class="section-card"><div class="section-title">Case Snapshot</div>', unsafe_allow_html=True)
             st.markdown(
-                f'''<div class="signal"><span class="signal-name">Service</span><span class="signal-value">{v.get("service_type", "-")}</span></div>
-                <div class="signal"><span class="signal-name">Vendor status</span><span class="signal-value">{v.get("status", "-")}</span></div>
-                <div class="signal"><span class="signal-name">Onboarded</span><span class="signal-value">{v.get("onboarded_date", "-")}</span></div>
-                <div class="signal"><span class="signal-name">Contract end</span><span class="signal-value">{v.get("contract_end_date", "-")}</span></div>
-                <div class="signal"><span class="signal-name">Assessment quality</span><span class="signal-value">{risk["assessment_quality"]}</span></div>''',
+                f'''<div class="signal"><span class="signal-name">Service</span><span class="signal-value">{safe_html(v.get("service_type", "-"))}</span></div>
+                <div class="signal"><span class="signal-name">Vendor status</span><span class="signal-value">{safe_html(v.get("status", "-"))}</span></div>
+                <div class="signal"><span class="signal-name">Onboarded</span><span class="signal-value">{safe_html(v.get("onboarded_date", "-"))}</span></div>
+                <div class="signal"><span class="signal-name">Contract end</span><span class="signal-value">{safe_html(v.get("contract_end_date", "-"))}</span></div>
+                <div class="signal"><span class="signal-name">Assessment quality</span><span class="signal-value">{safe_html(risk["assessment_quality"])}</span></div>''',
                 unsafe_allow_html=True,
             )
             st.markdown('</div>', unsafe_allow_html=True)
@@ -2434,12 +2450,12 @@ elif menu == "Vendor Case Workspace":
         with right:
             st.markdown('<div class="section-card"><div class="section-title">Risk Lifecycle</div>', unsafe_allow_html=True)
             st.markdown(
-                f'''<div class="signal"><span class="signal-name">Criticality</span><span class="signal-value">{risk["criticality_tier"]}</span></div>
-                <div class="signal"><span class="signal-name">Inherent Risk</span><span class="signal-value">{risk["inherent_level"]} - {risk["inherent_score"]}/15</span></div>
-                <div class="signal"><span class="signal-name">Control Effectiveness</span><span class="signal-value">{risk["control_effectiveness"]}</span></div>
-                <div class="signal"><span class="signal-name">Calculated Residual</span><span class="signal-value">{risk["calculated_residual"]}</span></div>
-                <div class="signal"><span class="signal-name">Final Residual</span><span class="signal-value">{risk["final_residual"]}</span></div>
-                <div class="signal"><span class="signal-name">Monitoring</span><span class="signal-value">{risk["monitoring"]}</span></div>''',
+                f'''<div class="signal"><span class="signal-name">Criticality</span><span class="signal-value">{safe_html(risk["criticality_tier"])}</span></div>
+                <div class="signal"><span class="signal-name">Inherent Risk</span><span class="signal-value">{safe_html(risk["inherent_level"])} - {safe_html(risk["inherent_score"])}/15</span></div>
+                <div class="signal"><span class="signal-name">Control Effectiveness</span><span class="signal-value">{safe_html(risk["control_effectiveness"])}</span></div>
+                <div class="signal"><span class="signal-name">Calculated Residual</span><span class="signal-value">{safe_html(risk["calculated_residual"])}</span></div>
+                <div class="signal"><span class="signal-name">Final Residual</span><span class="signal-value">{safe_html(risk["final_residual"])}</span></div>
+                <div class="signal"><span class="signal-name">Monitoring</span><span class="signal-value">{safe_html(risk["monitoring"])}</span></div>''',
                 unsafe_allow_html=True,
             )
             st.markdown('</div>', unsafe_allow_html=True)
@@ -2507,7 +2523,7 @@ elif menu == "Vendor Case Workspace":
         else:
             for status_name, doc in evidence_items:
                 attached = get_document_file(vendor_id, doc)
-                st.markdown(f'<div class="signal"><span class="signal-name">{doc}</span><span>{badge(status_name)}</span></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="signal"><span class="signal-name">{safe_html(doc)}</span><span>{badge(status_name)}</span></div>', unsafe_allow_html=True)
                 with st.expander(f"Evidence record - {doc}"):
                     if attached is not None:
                         st.caption(f"Attached: {attached['filename']} - {attached['uploaded_at']}")
@@ -2529,7 +2545,7 @@ elif menu == "Vendor Case Workspace":
                 finding_key = f"{finding.get('finding_type', '')}|{finding.get('domain', '')}"
                 tracked = vendor_actions[vendor_actions["finding_key"] == finding_key] if not vendor_actions.empty else pd.DataFrame()
                 tracked_status = tracked.iloc[-1]["status"] if not tracked.empty else "Open"
-                st.markdown(f'''<div class="finding {str(finding["severity"]).lower()}"><div class="finding-title">F-{idx:03d} - {finding["severity"]} - {finding["finding_type"]}</div><div class="finding-detail">{finding["domain"]} - {finding["description"]}</div><div class="finding-detail">Rationale: {finding["rationale"]}</div><div class="finding-detail">Workflow status: {tracked_status}</div></div>''', unsafe_allow_html=True)
+                st.markdown(f'''<div class="finding {safe_html(str(finding["severity"]).lower())}"><div class="finding-title">F-{idx:03d} - {safe_html(finding["severity"])} - {safe_html(finding["finding_type"])}</div><div class="finding-detail">{safe_html(finding["domain"])} - {safe_html(finding["description"])}</div><div class="finding-detail">Rationale: {safe_html(finding["rationale"])}</div><div class="finding-detail">Workflow status: {safe_html(tracked_status)}</div></div>''', unsafe_allow_html=True)
 
     with tabs[4]:
         st.subheader("Remediation tracking")
@@ -2576,7 +2592,7 @@ elif menu == "Vendor Case Workspace":
                 target_date = st.text_input("Target / review date", value=str(case_state.get("target_date", "") or ""), placeholder="YYYY-MM-DD")
             rationale = st.text_area("Decision rationale", value=str(case_state.get("decision_rationale", "") or ""), placeholder="Why is this disposition appropriate given residual risk and outstanding actions?")
             next_action = st.text_area("Next action", value=str(case_state.get("next_action", "") or ""), placeholder="e.g. Vendor to provide MFA policy export; analyst to validate by target date.")
-            st.markdown(f'''<div class="treatment-card"><div class="treatment-title">Model recommendation - {risk["treatment"]}</div><div class="treatment-copy">Current final residual risk: {risk["final_residual"]}. {risk["treatment_copy"]}</div></div>''', unsafe_allow_html=True)
+            st.markdown(f'''<div class="treatment-card"><div class="treatment-title">Model recommendation - {safe_html(risk["treatment"])}</div><div class="treatment-copy">Current final residual risk: {safe_html(risk["final_residual"])}. {safe_html(risk["treatment_copy"])}</div></div>''', unsafe_allow_html=True)
             if st.form_submit_button("Save risk decision", type="primary"):
                 if decision != "Further review" and not rationale.strip():
                     st.error("Add a rationale before recording a final disposition.")
@@ -2704,9 +2720,9 @@ elif menu == "Vendor Case Workspace":
                     note_id = int(note["note_id"])
                     st.markdown(
                         f'''<div class="section-card" style="padding:.75rem 1rem;margin-bottom:.35rem;">
-                        <div class="section-title" style="margin-bottom:.2rem;">{note.get("note_type", "Case note")}</div>
-                        <div style="font-size:.85rem;">{note.get("note_text", "")}</div>
-                        <div style="font-size:.72rem;color:#687086;margin-top:.35rem;">{note.get("created_at", "")} - {note.get("created_by", "Authenticated user")}</div>
+                        <div class="section-title" style="margin-bottom:.2rem;">{safe_html(note.get("note_type", "Case note"))}</div>
+                        <div style="font-size:.85rem;">{safe_html(note.get("note_text", ""))}</div>
+                        <div style="font-size:.72rem;color:#687086;margin-top:.35rem;">{safe_html(note.get("created_at", ""))} - {safe_html(note.get("created_by", "Authenticated user"))}</div>
                         </div>''',
                         unsafe_allow_html=True,
                     )
@@ -2733,7 +2749,7 @@ elif menu == "Vendor Case Workspace":
         else:
             vendor_activity = vendor_activity.sort_values("activity_id", ascending=False)
             for _, event in vendor_activity.iterrows():
-                st.markdown(f'''<div class="section-card" style="padding:.75rem 1rem;margin-bottom:.5rem;"><div class="section-title" style="margin-bottom:.25rem;">{event.get("activity_type", "Activity")}</div><div style="font-size:.85rem;">{event.get("activity_detail", "")}</div><div style="font-size:.72rem;color:#687086;margin-top:.35rem;">{event.get("created_at", "")} - {event.get("actor", "Authenticated user")}</div></div>''', unsafe_allow_html=True)
+                st.markdown(f'''<div class="section-card" style="padding:.75rem 1rem;margin-bottom:.5rem;"><div class="section-title" style="margin-bottom:.25rem;">{safe_html(event.get("activity_type", "Activity"))}</div><div style="font-size:.85rem;">{safe_html(event.get("activity_detail", ""))}</div><div style="font-size:.72rem;color:#687086;margin-top:.35rem;">{safe_html(event.get("created_at", ""))} - {safe_html(event.get("actor", "Authenticated user"))}</div></div>''', unsafe_allow_html=True)
 
 
 
@@ -2862,9 +2878,9 @@ elif menu == "Fourth-Party Risk":
         st.markdown(
             f"""
             <div class="finding">
-                <div class="finding-title">{row["name"]} -> {row["subcontractor_name"]}</div>
+                <div class="finding-title">{safe_html(row["name"])} -> {safe_html(row["subcontractor_name"])}</div>
                 <div class="finding-detail">
-                    {row["service_provided"]} - {row["criticality"]} primary vendor - Undisclosed relationship
+                    {safe_html(row["service_provided"])} - {safe_html(row["criticality"])} primary vendor - Undisclosed relationship
                 </div>
             </div>
             """,
@@ -2929,7 +2945,7 @@ elif menu == "Document Compliance":
         st.markdown(
             f"""
             <div class="signal">
-                <span class="signal-name">{doc}{attach_tag}</span>
+                <span class="signal-name">{safe_html(doc)}{safe_html(attach_tag)}</span>
                 <span>{badge(status_)}</span>
             </div>
             """,
@@ -2992,8 +3008,8 @@ elif menu == "Sample Document Library":
         st.markdown(
             f"""
             <div class="sample-card">
-                <div class="sample-title">{doc_type}</div>
-                <div class="sample-copy">{template["subheading"]}</div>
+                <div class="sample-title">{safe_html(doc_type)}</div>
+                <div class="sample-copy">{safe_html(template["subheading"])}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -3043,13 +3059,13 @@ elif menu == "Assessment Simulation":
         f"""
         <div class="section-card">
             <div class="section-title">Case File</div>
-            <b>Vendor:</b> {v["name"]}<br>
-            <b>Service:</b> {v["service_type"]}<br>
-            <b>Data accessed:</b> {v["data_accessed"]}<br>
-            <b>Criticality:</b> {case_model["criticality_tier"]}<br>
-            <b>Assessment status:</b> {case_model["assessment_quality"]}<br>
-            <b>Status:</b> {v["status"]}<br>
-            <b>Contract end:</b> {v["contract_end_date"]}
+            <b>Vendor:</b> {safe_html(v["name"])}<br>
+            <b>Service:</b> {safe_html(v["service_type"])}<br>
+            <b>Data accessed:</b> {safe_html(v["data_accessed"])}<br>
+            <b>Criticality:</b> {safe_html(case_model["criticality_tier"])}<br>
+            <b>Assessment status:</b> {safe_html(case_model["assessment_quality"])}<br>
+            <b>Status:</b> {safe_html(v["status"])}<br>
+            <b>Contract end:</b> {safe_html(v["contract_end_date"])}
         </div>
         """,
         unsafe_allow_html=True,
@@ -3114,10 +3130,10 @@ elif menu == "Assessment Simulation":
             f"""
             <div class="score-box">
                 <div class="metric-label">Model Assessment</div>
-                <div class="score-number" style="font-size:1.55rem;">{model["level"]}</div>
+                <div class="score-number" style="font-size:1.55rem;">{safe_html(model["level"])}</div>
                 <div style="color:#b7c0d6;margin-top:.45rem;">
-                    {model["criticality_tier"]} | Inherent {model["inherent_level"]} |
-                    Controls {model["control_effectiveness"]}
+                    {safe_html(model["criticality_tier"])} | Inherent {safe_html(model["inherent_level"])} |
+                    Controls {safe_html(model["control_effectiveness"])}
                 </div>
             </div>
             """,
@@ -3998,9 +4014,9 @@ elif menu == "IT Risk / GRC Practice Lab":
     st.markdown(
         f"""
         <div class="console-card">
-            <div class="console-kicker">Case File - {case_id}</div>
-            <div class="console-title">{selected_case.split(' - ',1)[1]}</div>
-            <div class="console-copy">{case['context']}</div>
+            <div class="console-kicker">Case File - {safe_html(case_id)}</div>
+            <div class="console-title">{safe_html(selected_case.split(' - ',1)[1])}</div>
+            <div class="console-copy">{safe_html(case['context'])}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -4153,8 +4169,8 @@ elif menu == "IT Risk / GRC Practice Lab":
                 st.markdown(
                     f"""
                     <div class="treatment-card">
-                        <div class="treatment-title">{name}</div>
-                        <div class="treatment-copy">{mapping}</div>
+                        <div class="treatment-title">{safe_html(name)}</div>
+                        <div class="treatment-copy">{safe_html(mapping)}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
