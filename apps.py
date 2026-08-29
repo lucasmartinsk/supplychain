@@ -1794,6 +1794,146 @@ Risk rules:
 """.strip()
 
 
+
+def _local_grounded_review(case_context):
+    """Deterministic, case-grounded fallback used only when the free AI provider fails.
+
+    It never invents evidence requirements. It uses the same case packet already shown to the analyst.
+    """
+    vendor = case_context.get("vendor", {}) or {}
+    risk = case_context.get("risk", {}) or {}
+    case = case_context.get("case", {}) or {}
+    findings = case_context.get("findings", []) or []
+
+    name = str(vendor.get("name") or "Active vendor")
+    criticality = str(risk.get("criticality") or "Review Required")
+    inherent = str(risk.get("inherent") or "Review Required")
+    residual = str(risk.get("residual") or "Review Required")
+    controls = str(risk.get("control_effectiveness") or "Not assessed")
+    quality = str(risk.get("assessment_quality") or "")
+    coverage = risk.get("evidence_coverage_pct")
+    current_status = str(case.get("case_status") or "In Review")
+    current_decision = str(case.get("risk_decision") or "Further review")
+
+    missing = [str(x) for x in (risk.get("missing_evidence") or []) if str(x).strip()]
+    expired = [str(x) for x in (risk.get("expired_evidence") or []) if str(x).strip()]
+    pending = [str(x) for x in (risk.get("pending_evidence") or []) if str(x).strip()]
+
+    evidence_gaps = []
+    for item in expired[:2]:
+        evidence_gaps.append({
+            "gap": f"Expired required evidence: {item}",
+            "basis": f"{item} is listed as Expired in the case evidence status.",
+            "where_to_review": "Evidence",
+            "analyst_action": f"Review the expired {item} and request a current version if the requirement remains applicable.",
+            "vendor_evidence_required": True,
+        })
+    for item in missing[:2]:
+        evidence_gaps.append({
+            "gap": f"Missing required evidence: {item}",
+            "basis": f"{item} is listed as Missing in the case evidence status.",
+            "where_to_review": "Evidence",
+            "analyst_action": f"Confirm the requirement and request {item} from the vendor.",
+            "vendor_evidence_required": True,
+        })
+    for item in pending[:2]:
+        if len(evidence_gaps) >= 4:
+            break
+        evidence_gaps.append({
+            "gap": f"Evidence still pending: {item}",
+            "basis": f"{item} is listed as Pending in the case evidence status.",
+            "where_to_review": "Evidence",
+            "analyst_action": f"Follow up on {item} and validate it before relying on the control conclusion.",
+            "vendor_evidence_required": True,
+        })
+
+    is_provisional = "provisional" in quality.lower() or any(
+        "provisional" in str(x.get("source", "")).lower() or "model" in str(x.get("source", "")).lower()
+        for x in (risk.get("assessment_inputs") or [])
+    )
+    if is_provisional and len(evidence_gaps) < 4:
+        evidence_gaps.append({
+            "gap": "Assessment inputs require analyst validation",
+            "basis": f"Assessment quality = {quality or 'Provisional / modelled'}.",
+            "where_to_review": "Assessment â†’ Inherent-risk factors",
+            "analyst_action": "Review the modelled inputs against the vendor information already available and confirm or amend each value.",
+            "vendor_evidence_required": False,
+        })
+
+    open_findings = [f for f in findings if str(f.get("status", "Open")).lower() not in {"closed", "resolved"}]
+    risk_challenges = []
+    if open_findings:
+        high = [f for f in open_findings if str(f.get("severity", "")).lower() in {"high", "critical"}]
+        risk_challenges.append({
+            "challenge": "Open findings must be reconciled with the current risk disposition before closure.",
+            "basis": f"The case has {len(open_findings)} open finding(s)" + (f", including {len(high)} High/Critical" if high else "") + ".",
+        })
+    if is_provisional:
+        risk_challenges.append({
+            "challenge": "The current risk result relies on inputs that have not yet been fully confirmed by an analyst.",
+            "basis": f"Assessment quality is recorded as {quality or 'Provisional'}.",
+        })
+    if str(residual).lower() in {"high", "critical"}:
+        risk_challenges.append({
+            "challenge": "The residual risk remains material and should not be treated as routine monitoring.",
+            "basis": f"Final residual risk = {residual}.",
+        })
+    if not risk_challenges:
+        risk_challenges.append({
+            "challenge": "No material contradiction is visible in the supplied case packet.",
+            "basis": f"Evidence coverage is {coverage}% with {len(open_findings)} open finding(s) and residual risk {residual}.",
+        })
+
+    # Conservative, deterministic proposed disposition.
+    if str(residual).lower() == "critical":
+        proposed_status = "Remediation Required"
+        proposed_decision = "Further review"
+    elif open_findings or missing or expired or pending:
+        proposed_status = "In Review"
+        proposed_decision = "Further review"
+    elif is_provisional:
+        proposed_status = "In Review"
+        proposed_decision = "Further review"
+    else:
+        proposed_status = current_status if current_status in AI_CASE_STATUS_OPTIONS else "In Review"
+        proposed_decision = current_decision if current_decision in AI_RISK_DECISION_OPTIONS else "Further review"
+
+    if evidence_gaps:
+        first_gap = evidence_gaps[0]
+        next_action = first_gap["analyst_action"]
+        recommendation = "Resolve the documented evidence or assessment-validation items before changing the case disposition."
+    elif open_findings:
+        next_action = "Review the open findings and confirm that remediation and closure evidence support the current risk position."
+        recommendation = "Keep the case under review until the open findings are appropriately addressed."
+    else:
+        next_action = "Complete the analyst review and confirm that the recorded assessment and disposition remain appropriate."
+        recommendation = "No new evidence gap is visible in the supplied case data; complete the analyst validation and proceed according to the recorded risk position."
+
+    summary = (
+        f"{name} is assessed as {criticality} with {inherent} inherent risk, {controls} controls "
+        f"and {residual} residual risk. Evidence coverage is {coverage}%. "
+        f"The case currently has {len(open_findings)} open finding(s)."
+    )
+    explanation = (
+        f"The review is based only on the supplied case data. Residual risk is {residual}; "
+        f"assessment quality is {quality or 'not specified'}. "
+        + ("The main uncertainty is the need to validate modelled assessment inputs." if is_provisional else "No unsupported evidence requirement has been added.")
+    )
+
+    return {
+        "case_summary": summary,
+        "risk_explanation": explanation,
+        "recommendation": recommendation,
+        "confidence": "Medium",
+        "evidence_gaps": evidence_gaps[:4],
+        "risk_challenges": risk_challenges[:4],
+        "proposed_case_status": proposed_status,
+        "proposed_risk_decision": proposed_decision,
+        "proposed_next_action": next_action,
+        "proposed_rationale": f"Grounded review based on the current case packet: residual risk {residual}, assessment quality {quality or 'not specified'}, evidence coverage {coverage}%, and {len(open_findings)} open finding(s).",
+        "_generation_mode": "grounded-fallback",
+    }
+
 def run_ai_case_review(case_context):
     if OpenAI is None:
         raise RuntimeError("The OpenAI-compatible Python package is not installed. Add 'openai' to requirements.txt and redeploy.")
@@ -1856,42 +1996,37 @@ def run_ai_case_review(case_context):
         {"role": "user", "content": "Review this active TPRM case and return only the structured recommendation. CASE=" + compact_json},
     ]
 
-    response = _request_review(base_messages, token_budget=1800)
-    content = response.choices[0].message.content
-    finish_reason = getattr(response.choices[0], "finish_reason", None)
-
     try:
+        response = _request_review(base_messages, token_budget=1800)
+        content = response.choices[0].message.content
         return _parse_review_content(content)
-    except (json.JSONDecodeError, ValueError):
+    except Exception:
         # Free-router models occasionally return truncated, empty or slightly malformed JSON.
         # Retry with a shorter regeneration request.
         repair_messages = [
             {"role": "system", "content": AI_COPILOT_INSTRUCTIONS + "\nReturn ONLY valid JSON matching the schema. Keep every text field shorter than the stated limits."},
             {"role": "user", "content": "Regenerate a complete, concise structured review for this case. Do not add markdown or commentary. CASE=" + compact_json},
         ]
-        retry = _request_review(repair_messages, token_budget=1800)
-        retry_content = retry.choices[0].message.content
-        retry_finish = getattr(retry.choices[0], "finish_reason", None)
         try:
+            retry = _request_review(repair_messages, token_budget=1800)
+            retry_content = retry.choices[0].message.content
             return _parse_review_content(retry_content)
-        except (json.JSONDecodeError, ValueError):
-            # Final fallback: some free providers do not reliably honour json_schema.
-            # Ask for plain JSON and validate it locally.
-            fallback = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": AI_COPILOT_INSTRUCTIONS + "\nReturn one compact JSON object only. No markdown. No prose outside JSON."},
-                    {"role": "user", "content": "Return the TPRM case review as JSON only. CASE=" + compact_json},
-                ],
-                max_tokens=1800,
-            )
-            fallback_content = fallback.choices[0].message.content
+        except Exception:
+            # Final provider attempt: plain JSON without json_schema.
             try:
+                fallback = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": AI_COPILOT_INSTRUCTIONS + "\nReturn one compact JSON object only. No markdown. No prose outside JSON."},
+                        {"role": "user", "content": "Return the TPRM case review as JSON only. CASE=" + compact_json},
+                    ],
+                    max_tokens=1800,
+                )
+                fallback_content = fallback.choices[0].message.content
                 return _parse_review_content(fallback_content)
-            except (json.JSONDecodeError, ValueError) as final_error:
-                raise RuntimeError(
-                    "A new AI review is temporarily unavailable. Please try again in a moment."
-                ) from final_error
+            except Exception:
+                # Guaranteed no-break fallback: a deterministic review using only supplied case facts.
+                return _local_grounded_review(case_context)
 
 
 def save_ai_review(vendor_id, context_hash, model, review, actor):
@@ -2890,6 +3025,7 @@ elif menu == "Vendor Case Workspace":
             if not st.secrets.get("OPENROUTER_API_KEY", ""):
                 st.code('Add to Streamlit Secrets:\nOPENROUTER_API_KEY = "your-key"\n# optional\nAI_MODEL = "openrouter/free"', language="toml")
         else:
+            st.caption("Copilot engine Â· grounded review v4 Â· provider failure-safe")
             context = build_ai_case_context(v, risk, generated_findings, case_state, vendor_actions, documents, subcontractors)
             context_hash = ai_context_hash(context)
             review_key = f"ai_case_review_{vendor_id}"
@@ -2920,13 +3056,15 @@ elif menu == "Vendor Case Workspace":
                     status.write("Sending the case to the risk reviewer...")
                     review = run_ai_case_review(context)
                     model = st.secrets.get("AI_MODEL", "openrouter/free")
-                    review_id = save_ai_review(vendor_id, context_hash, model, review, actor)
+                    generation_mode = review.pop("_generation_mode", "ai")
+                    stored_model = model if generation_mode == "ai" else "grounded-local-fallback"
+                    review_id = save_ai_review(vendor_id, context_hash, stored_model, review, actor)
                     review.update({
                         "_review_id": review_id,
                         "_context_hash": context_hash,
                         "_created_at": _now_label(),
                         "_created_by": actor,
-                        "_model": model,
+                        "_model": stored_model,
                         "_disposition": "Pending",
                     })
                     st.session_state[review_key] = review
