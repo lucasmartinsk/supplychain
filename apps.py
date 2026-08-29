@@ -101,7 +101,12 @@ def require_microsoft_login():
             padding-top:1rem; border-top:1px solid #edf0f5;
         }
         div.stButton > button { min-height:2.8rem; font-weight:700; }
-        </style>
+        
+    .ai-grounded-card { padding:.8rem .9rem; }
+    .ai-grounded-title { font-weight:750; color:#162033; margin-bottom:.38rem; }
+    .ai-grounded-row { color:#596273; font-size:.82rem; line-height:1.45; margin-top:.18rem; }
+    .ai-grounded-tag { display:inline-block; margin-top:.48rem; padding:.18rem .45rem; border-radius:4px; background:#edf3fb; color:#315d91; font-size:.68rem; font-weight:750; letter-spacing:.02em; }
+</style>
         <div class="entra-shell">
             <div class="entra-kicker">Secure workspace</div>
             <div class="entra-title">TPRM Risk Lab</div>
@@ -1664,6 +1669,15 @@ def build_ai_case_context(vendor, risk, generated_findings, case_state, vendor_a
             "residual": risk.get("final_residual"),
             "treatment": risk.get("treatment"),
             "assessment_quality": risk.get("assessment_quality"),
+            "assessment_inputs": [
+                {
+                    "factor": _clean_for_ai(item[0]),
+                    "value": _clean_for_ai(item[1]),
+                    "maximum": _clean_for_ai(item[2]),
+                    "source": _clean_for_ai(item[3]),
+                }
+                for item in risk.get("drivers", [])
+            ],
             "evidence_coverage_pct": risk.get("compliance", {}).get("percentage"),
             "missing_evidence": risk.get("compliance", {}).get("missing", []),
             "expired_evidence": risk.get("compliance", {}).get("expired", []),
@@ -1697,8 +1711,33 @@ AI_REVIEW_SCHEMA = {
         "risk_explanation": {"type": "string"},
         "recommendation": {"type": "string"},
         "confidence": {"type": "string", "enum": ["Low", "Medium", "High"]},
-        "evidence_gaps": {"type": "array", "items": {"type": "string"}},
-        "risk_challenges": {"type": "array", "items": {"type": "string"}},
+        "evidence_gaps": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "gap": {"type": "string"},
+                    "basis": {"type": "string"},
+                    "where_to_review": {"type": "string"},
+                    "analyst_action": {"type": "string"},
+                    "vendor_evidence_required": {"type": "boolean"},
+                },
+                "required": ["gap", "basis", "where_to_review", "analyst_action", "vendor_evidence_required"],
+            },
+        },
+        "risk_challenges": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "challenge": {"type": "string"},
+                    "basis": {"type": "string"},
+                },
+                "required": ["challenge", "basis"],
+            },
+        },
         "proposed_case_status": {"type": "string", "enum": AI_CASE_STATUS_OPTIONS},
         "proposed_risk_decision": {"type": "string", "enum": AI_RISK_DECISION_OPTIONS},
         "proposed_next_action": {"type": "string"},
@@ -1712,16 +1751,37 @@ AI_REVIEW_SCHEMA = {
 }
 
 
+
 AI_COPILOT_INSTRUCTIONS = """
 You are a senior Third-Party Risk Management analyst copilot in a regulated financial-services environment.
-Use only the supplied case data. Never invent evidence, vendor facts, control effectiveness, compliance or remediation evidence.
+Your review must be grounded only in the supplied case packet. Do not add generic security requirements that are not supported by the case.
+
+GROUNDING RULES â€” mandatory:
+1. An evidence gap may be reported ONLY when one of these is true in the supplied data:
+   - the risk.compliance lists the evidence as missing, expired or pending;
+   - an open finding explicitly identifies missing/insufficient evidence;
+   - an assessment input is provisional/modelled and therefore needs analyst validation.
+2. Do NOT invent a need for penetration tests, monitoring logs, certifications, policies, questionnaires or other evidence merely because they are common good practice.
+3. If evidence coverage is 100% and there are no open findings, do not create new vendor evidence gaps unless a specific supplied assessment input cannot be substantiated.
+4. For a provisional/modelled assessment, the first recommendation is analyst validation of the modelled inputs in the Assessment tab. Additional vendor evidence is required only if the analyst cannot validate a specific input from existing case information.
+5. Distinguish clearly between a documented evidence gap, an analyst-validation task, and a general risk challenge.
+6. Never treat absence of evidence as proof that a control failed. Never treat an unverified assumption as fact.
+
+For every evidence_gaps item:
+- gap: say exactly what is missing/unverified;
+- basis: cite the supplied case fact that supports it, e.g. 'Assessment quality = Provisional' or 'ISO 27001 listed as Expired';
+- where_to_review: name the lab location, e.g. 'Assessment â†’ Inherent-risk factors', 'Evidence', or 'Findings';
+- analyst_action: tell the analyst what to do next in plain language;
+- vendor_evidence_required: true only when the current case explicitly supports asking the vendor for additional evidence.
+
+For every risk_challenges item, include the challenge and the specific supplied-case basis.
 
 Return a concise operational review for a human analyst:
 - case_summary: maximum 90 words;
 - risk_explanation: maximum 100 words;
 - recommendation: maximum 65 words;
-- evidence_gaps: maximum 4 short items;
-- risk_challenges: maximum 4 short items;
+- evidence_gaps: maximum 4 items;
+- risk_challenges: maximum 4 items;
 - proposed_next_action: one practical action, maximum 55 words;
 - proposed_rationale: maximum 100 words.
 
@@ -1882,10 +1942,42 @@ def _h(value):
     return html.escape(str(value or ""))
 
 
-def _ai_item_cards(items, empty_text):
+def _ai_item_cards(items, empty_text, kind="generic"):
     if not items:
-        return f'<div class="ai-observation">{_h(empty_text)}</div>'
-    return "".join(f'<div class="ai-observation">{_h(item)}</div>' for item in items[:4])
+        return f'<div class="ai-empty">{_h(empty_text)}</div>'
+    cards = []
+    for item in items:
+        # Backwards compatibility for reviews saved before grounded structured items existed.
+        if isinstance(item, str):
+            cards.append(f'<div class="ai-observation">{_h(item)}</div>')
+            continue
+        if not isinstance(item, dict):
+            cards.append(f'<div class="ai-observation">{_h(item)}</div>')
+            continue
+        if kind == "gap":
+            vendor_req = bool(item.get("vendor_evidence_required", False))
+            vendor_label = "Vendor evidence required" if vendor_req else "Analyst validation first"
+            card = (
+                '<div class="ai-observation ai-grounded-card">'
+                f'<div class="ai-grounded-title">{_h(item.get("gap", "Evidence / validation item"))}</div>'
+                f'<div class="ai-grounded-row"><b>Basis:</b> {_h(item.get("basis", "Not stated"))}</div>'
+                f'<div class="ai-grounded-row"><b>Where:</b> {_h(item.get("where_to_review", "Vendor Case Workspace"))}</div>'
+                f'<div class="ai-grounded-row"><b>Action:</b> {_h(item.get("analyst_action", "Review the case evidence."))}</div>'
+                f'<div class="ai-grounded-tag">{vendor_label}</div>'
+                '</div>'
+            )
+            cards.append(card)
+        elif kind == "challenge":
+            card = (
+                '<div class="ai-observation ai-grounded-card">'
+                f'<div class="ai-grounded-title">{_h(item.get("challenge", "Risk challenge"))}</div>'
+                f'<div class="ai-grounded-row"><b>Basis:</b> {_h(item.get("basis", "Not stated"))}</div>'
+                '</div>'
+            )
+            cards.append(card)
+        else:
+            cards.append(f'<div class="ai-observation">{_h(item)}</div>')
+    return "".join(cards)
 
 
 def apply_ai_case_recommendation(vendor_id, case_state, review, actor):
@@ -2864,10 +2956,10 @@ elif menu == "Vendor Case Workspace":
                 obs1, obs2 = st.columns(2)
                 with obs1:
                     st.markdown('<div class="ai-section-label">Evidence gaps</div>', unsafe_allow_html=True)
-                    st.markdown(_ai_item_cards(review.get("evidence_gaps", []), "No material evidence gaps identified."), unsafe_allow_html=True)
+                    st.markdown(_ai_item_cards(review.get("evidence_gaps", []), "No material evidence gaps identified.", kind="gap"), unsafe_allow_html=True)
                 with obs2:
                     st.markdown('<div class="ai-section-label">Risk challenge</div>', unsafe_allow_html=True)
-                    st.markdown(_ai_item_cards(review.get("risk_challenges", []), "No material risk challenge identified."), unsafe_allow_html=True)
+                    st.markdown(_ai_item_cards(review.get("risk_challenges", []), "No material risk challenge identified.", kind="challenge"), unsafe_allow_html=True)
 
                 st.markdown('<div class="ai-section-label" style="margin-top:.75rem;">AI recommendation</div>', unsafe_allow_html=True)
                 st.markdown(f'<div class="ai-recommendation">{_h(review.get("recommendation", ""))}</div>', unsafe_allow_html=True)
