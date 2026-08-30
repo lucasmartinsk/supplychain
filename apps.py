@@ -1604,6 +1604,9 @@ Rules:
 - A provisional assessment is an internal analyst-validation issue first. It does not by itself justify Awaiting Vendor, Approve with conditions, or a vendor evidence request.
 - When assessment_is_provisional is true, use "Assessment inputs require analyst validation" as the assessment gap and "Assessment conclusions still require analyst validation." as the risk challenge. The basis is the provisional modelled inherent-risk inputs.
 - While the assessment is provisional, proposed_case_status must be "In Review" and proposed_risk_decision must be "Further review".
+- When provisional inputs coexist with recorded evidence gaps or open findings, address both. Name each affected document, its recorded status and any linked finding. Do not replace concrete remediation with a generic instruction to validate inputs.
+- Distinguish Missing, Expired and Pending. Pending alone does not establish an overdue submission or failed control. Check existing records before requesting a replacement from the vendor.
+- For each concrete issue, state the next action and what must be validated before it can be resolved. Do not invent owners, deadlines, completed remediation or formal risk acceptance.
 - Do not recommend closing a material finding without adequate validation evidence.
 - Be proportionate to vendor criticality and actual case facts.
 - If information is insufficient, prefer Further review. Use Awaiting Vendor only when evidence_policy contains a concrete vendor evidence reason.
@@ -1623,6 +1626,79 @@ PROVISIONAL_NEXT_ACTION = (
     "Review and confirm the provisional assessment inputs in the Assessment tab. "
     "Request additional vendor evidence only if a specific input cannot be validated from the existing case data."
 )
+
+
+def case_issue_actions(case_context):
+    risk_data = case_context.get("risk_engine", {}) or {}
+    closed_statuses = {"closed", "resolved", "validated", "complete", "completed", "accepted"}
+    findings = [
+        item for item in case_context.get("findings", []) or []
+        if str(item.get("remediation_status", "Open")).strip().lower() not in closed_statuses
+    ]
+    issues = []
+    linked = set()
+    for status, key in (("Expired", "expired_evidence"), ("Missing", "missing_evidence"), ("Pending", "pending_evidence")):
+        documents = dict.fromkeys(str(item).strip() for item in risk_data.get(key, []) or [] if item is not None and str(item).strip())
+        for document in documents:
+            matching = [
+                index for index, finding in enumerate(findings)
+                if str(finding.get("finding_type", "")).casefold() == f"{status} Evidence".casefold()
+                and str(finding.get("description", "")).casefold() == f"Required document {status.lower()}: {document}".casefold()
+            ]
+            linked.update(matching)
+            references = ", ".join(
+                f"{findings[index].get('finding_id', 'Recorded finding')} (severity {findings[index].get('severity', 'not recorded')})"
+                for index in matching
+            )
+            suffix = f"; linked finding: {references}" if references else ""
+            title = f"{status} evidence: {document}{suffix}"
+            if status == "Expired":
+                recommendation = f"Obtain and validate a current version of {document} to address its recorded Expired status{suffix}."
+                action = (
+                    f"In Evidence, check for a current, valid version of {document} in existing records. "
+                    "If none is available, request the updated document from the vendor. "
+                    "Validate its scope and validity before updating the evidence record."
+                )
+                challenge = f"{title}. The required evidence is not currently valid; this alone does not prove that the underlying control has failed."
+            elif status == "Missing":
+                recommendation = f"Locate and validate the required {document}, currently recorded as Missing{suffix}."
+                action = (
+                    f"In Evidence, search existing case records for {document}. If it is not available, "
+                    "request that specific document from the vendor and validate its scope and validity before recording it as received."
+                )
+                challenge = f"{title}. The recorded requirement is not covered; do not infer control failure solely from the missing document."
+            else:
+                recommendation = f"Review the Pending status of {document} and establish whether submission or analyst review remains outstanding{suffix}."
+                action = (
+                    f"In Evidence, check the submission and review status of {document}. Review it if already supplied; "
+                    "follow up with the vendor only if submission remains outstanding. Do not assume it is overdue."
+                )
+                challenge = f"{title}. Pending alone does not establish that evidence is missing, overdue or that a control has failed."
+            if references:
+                action += f" Update {references} in Remediation after validating the evidence; do not close the finding before validation."
+            issues.append({"title": title, "recommendation": recommendation, "action": action, "challenge": challenge})
+
+    for index, finding in enumerate(findings):
+        if index in linked:
+            continue
+        reference = str(finding.get("finding_id", "Recorded finding"))
+        kind = str(finding.get("finding_type", "Recorded issue"))
+        description = str(finding.get("description", "") or "")
+        severity = str(finding.get("severity", "not recorded"))
+        title = f"Open finding {reference}: {kind} (severity {severity})"
+        if kind == "Contract":
+            action = f"Review {reference} with Legal / Procurement and confirm the current contractual basis for service continuation. Validate the resolution before closing the finding."
+        elif kind == "Fourth-Party Risk":
+            action = f"Investigate the undisclosed relationships recorded in {reference}. Reconcile existing disclosure records and obtain clarification of the specific discrepancy if needed. Validate the resolution before closing the finding."
+        else:
+            action = f"Review {reference} in Findings: {description or kind}. Define remediation for this recorded issue and validate its resolution before closure."
+        issues.append({
+            "title": title,
+            "recommendation": action,
+            "action": action,
+            "challenge": f"{title}. {description}".strip(),
+        })
+    return issues
 
 
 def enforce_ai_review_guardrails(case_context, review):
@@ -1661,6 +1737,29 @@ def enforce_ai_review_guardrails(case_context, review):
             "Assessment quality is Provisional because the inherent-risk inputs are modelled. "
             "Analyst validation is required before changing the current case status or risk decision."
         )
+        issues = case_issue_actions(case_context)
+        if issues:
+            guarded["evidence_gaps"] = ["Assessment inputs require analyst validation", *[item["title"] for item in issues]]
+            guarded["risk_challenges"] = ["Assessment conclusions still require analyst validation.", *[item["challenge"] for item in issues]]
+            guarded["recommendation"] = " ".join(item["recommendation"] for item in issues) + (
+                " In parallel, validate the modelled inherent-risk inputs in Assessment using the existing case information. "
+                f"Do not lower the current {final_residual or 'recorded'} residual-risk rating solely because inputs are confirmed. "
+                "Recalculate the assessment after validating the inputs and updating the evidence/remediation records. "
+                f"The current treatment is {treatment or 'not recorded'}; this is not an approval or formal risk acceptance."
+            )
+            actions = [item["action"] for item in issues]
+            actions.extend([
+                "In Assessment, confirm or correct the provisional inherent-risk inputs using existing case information.",
+                "In Remediation, record an appropriate owner and target date for each unresolved issue. Recalculate the assessment after validation and review the risk decision; do not assume the rating will decrease.",
+            ])
+            guarded["proposed_next_action"] = "\n\n".join(f"{index}. {action}" for index, action in enumerate(actions, start=1))
+            coverage = risk_engine_data.get("evidence_coverage_pct")
+            coverage_text = f"Evidence coverage is {coverage}%. " if coverage is not None else ""
+            guarded["proposed_rationale"] = (
+                coverage_text + "Recorded issues: " + "; ".join(item["title"] for item in issues) + ". "
+                "These issues need specific follow-up in addition to validating the provisional assessment inputs. "
+                "Keep the case In Review and the risk decision Further review while these actions remain unresolved."
+            )
     else:
         recommendation = str(guarded.get("recommendation", "") or "")
         next_action = str(guarded.get("proposed_next_action", "") or "")
@@ -2613,7 +2712,7 @@ elif menu == "Vendor Case Workspace":
             if not st.secrets.get("OPENROUTER_API_KEY", ""):
                 st.code('Add to Streamlit Secrets:\nOPENROUTER_API_KEY = "your-key"\n# optional\nAI_MODEL = "openrouter/free"', language="toml")
         else:
-            review_key = f"ai_case_review_{vendor_id}"
+            review_key = f"ai_case_review_v5_{vendor_id}"
             run_col, clear_col = st.columns([1, .35])
             if run_col.button("Run AI Case Review", type="primary", use_container_width=True, key=f"run_ai_review_{vendor_id}"):
                 with st.spinner("Reviewing assessment, evidence, findings and current disposition..."):
